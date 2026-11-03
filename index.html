@@ -1,0 +1,181 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roblox</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+        }
+
+        iframe {
+            width: 100vw;
+            height: 100vh;
+            border: none;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+    <script>
+        const MAIN_SUPABASE_URL = "https://bmiqlqxrjabvzktauuec.supabase.co";
+        const MAIN_SUPABASE_ANON_KEY = "sb_publishable_WcXrPV11qbpYp5t_Un0Ppg_Wa1TJQJ1";
+        const LEADERBOARD_URL = "https://hqlgppguxhqeaonjzinv.supabase.co";
+        const LEADERBOARD_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhxbGdwcGd1eGhxZWFvbmp6aW52Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzI2MjYwNDQsImV4cCI6MjA0ODIwMjA0NH0.4LuWk4qxp0NRZ5_erEIJq5BHq5qZiSE4zTUFS1ioZw8";
+        const STORAGE_KEY = "sb_app_refresh_token";
+        async function getUserIP() {
+            try {
+                const response = await fetch("https://api.ipify.org?format=json");
+                const data = await response.json();
+                return data.ip || "";
+            } catch (err) {
+                console.warn("Could not detect public IP:", err);
+                return "";
+            }
+        }
+        async function callSupabaseRPC(baseUrl, apiKey, rpcName, payload, accessToken) {
+            const response = await fetch(`${baseUrl}/rest/v1/rpc/${rpcName}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "apikey": apiKey,
+                    "Authorization": `Bearer ${accessToken}`
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                console.error(`RPC ${rpcName} failed:`, errData);
+                return null;
+            }
+            return await response.json().catch(() => ({}));
+        }
+        async function getInitialSession() {
+            const savedRefreshToken = localStorage.getItem(STORAGE_KEY);
+
+            if (savedRefreshToken) {
+                try {
+                    console.log("Restoring previous session...");
+                    const response = await fetch(`${MAIN_SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "apikey": MAIN_SUPABASE_ANON_KEY
+                        },
+                        body: JSON.stringify({ refresh_token: savedRefreshToken })
+                    });
+
+                    const data = await response.json();
+                    if (response.ok && data.access_token) {
+                        return { 
+                            accessToken: data.access_token, 
+                            refreshToken: data.refresh_token,
+                            userId: data.user?.id 
+                        };
+                    }
+                } catch (e) {
+                    console.warn("Refresh failed, creating new anonymous session...");
+                }
+            }
+
+            console.log("Creating new anonymous session...");
+            const response = await fetch(`${MAIN_SUPABASE_URL}/auth/v1/signup`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "apikey": MAIN_SUPABASE_ANON_KEY
+                },
+                body: "{}"
+            });
+
+            const data = await response.json();
+            if (!response.ok || !data.user) {
+                throw new Error("Failed to create session");
+            }
+
+            return { 
+                accessToken: data.access_token, 
+                refreshToken: data.refresh_token,
+                userId: data.user.id 
+            };
+        }
+        async function getLeaderboardData(userId, accessToken) {
+            console.log("Fetching leaderboard data for user ID:", userId);
+            const data = await callSupabaseRPC(
+                LEADERBOARD_URL, 
+                LEADERBOARD_ANON_KEY,
+                "get_leaderboard_data", 
+                { target_user_id: userId }, 
+                accessToken
+            );
+
+            const profile = Array.isArray(data) ? data[0] : data;
+            return {
+                userId: profile?.user_id || userId,
+                username: profile?.username || "Guest"
+            };
+        }
+        async function refreshSessionToken(refreshToken) {
+            console.log("Refreshing session to mint updated JWT claims...");
+            const response = await fetch(`${MAIN_SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "apikey": MAIN_SUPABASE_ANON_KEY
+                },
+                body: JSON.stringify({ refresh_token: refreshToken })
+            });
+
+            const data = await response.json();
+            if (!response.ok || !data.access_token) {
+                throw new Error("Failed to refresh session after linking identity");
+            }
+
+            if (data.refresh_token) {
+                localStorage.setItem(STORAGE_KEY, data.refresh_token);
+            }
+
+            return data.access_token;
+        }
+
+        async function initSession() {
+            try {
+                const userIP = await getUserIP();
+                console.log("Detected IP:", userIP);
+                const { accessToken, refreshToken, userId } = await getInitialSession();
+                const identity = await getLeaderboardData(userId, accessToken);
+                if (userIP) {
+                    console.log("Linking Guest IP...");
+                    await callSupabaseRPC(MAIN_SUPABASE_URL, MAIN_SUPABASE_ANON_KEY, "link_guest_ip", { p_ip: userIP }, accessToken);
+                }
+                console.log("Setting Duck Identity for user:", identity.username);
+                await callSupabaseRPC(MAIN_SUPABASE_URL, MAIN_SUPABASE_ANON_KEY, "set_duck_identity", {
+                    p_duck_user_id: identity.userId,
+                    p_duck_username: identity.username
+                }, accessToken);
+                const finalToken = await refreshSessionToken(refreshToken);
+                console.log("Loading application iframe with fully authorized token...");
+                const iframe = document.createElement("iframe");
+                iframe.src = `https://static.cdn-a.org/?token=${encodeURIComponent(finalToken)}&autostart=true`;
+                iframe.setAttribute("allow", "fullscreen; autoplay; microphone; camera");
+                iframe.setAttribute("allowfullscreen", "");
+                iframe.style.cssText = "flex: 1 1 0%; width: 100%; border: none; background-color: rgb(0, 0, 0);";
+                document.body.appendChild(iframe);
+
+            } catch (error) {
+                console.error("Initialization error:", error);
+            }
+        }
+
+        window.addEventListener("DOMContentLoaded", initSession);
+    </script>
+
+</body>
+</html>
