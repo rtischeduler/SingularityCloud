@@ -93,17 +93,23 @@ export class App {
   async selectGame(gameId) {
     if (this._starting) return;
     this._starting = true;
-    this.loader?.show("Starting a session");
+    const startToken = (this._startToken = (this._startToken || 0) + 1);
+    const cancelled = () => this._startToken !== startToken;
+    this.loader?.show("Starting a session", {
+      cancel: () => { this._startToken++; this._starting = false; this.loader?.hide(); this.showScreen("screen-select"); },
+    });
     try {
-      await this.ensureSession((i, total, text) => this.loader?.step(i, total, text));
+      await this.ensureSession((i, total, text) => { if (!cancelled()) this.loader?.step(i, total, text); });
+      if (cancelled()) return;
     } catch (e) {
+      if (cancelled()) return;
       console.error("Session failed:", e);
       this.loader?.hide();
       this.notify("Couldn't start a session. Check your connection and try again.");
       this.showScreen("screen-select");
       return;
     } finally {
-      this._starting = false;
+      if (!cancelled()) this._starting = false;
     }
     this._loadingGame = true;
     this._selectGame(gameId);

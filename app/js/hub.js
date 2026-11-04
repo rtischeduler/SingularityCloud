@@ -7,7 +7,8 @@ import { ASTRA_ICONS } from "./astra-icons.js";
 
 export const ASTRA_ORIGIN = "https://astra-education.top";
 const CACHE_KEY = "sc_astra_games";
-const CACHE_TTL = 60 * 60 * 1000;
+const CACHE_TTL = 60 * 60 * 1000;      // fresh: skip the network
+const ICON_CACHE = "sc_astra_icons_v1"; // Cache Storage bucket for icon images
 const ICON_CONCURRENCY = 4;
 
 /** Accepts {ok, games:[...]} or a bare array. Drops blanks, Astra's own Roblox (ours is FreezeNova), dupes; sorts by name. */
@@ -47,7 +48,7 @@ export class Hub {
     this.io = "IntersectionObserver" in globalThis
       ? new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { this.io.unobserve(e.target); this.loadIcon(e.target); } }), { rootMargin: "200px" })
       : null;
-    this.setNote("Loading the Astra library…");
+    this.setNote("Loading library…");
   }
 
   /** FreezeNova's card is static markup; its image comes through the proxy like the Astra ones. */
@@ -75,7 +76,8 @@ export class Hub {
     if (!this._featured) { this._featured = true; this.loadFeatured(); }
     const cached = this.readCache();
     if (cached && Date.now() - cached.t < CACHE_TTL) return this.render(cached.games);
-    this.setNote("Loading the Astra library…");
+    if (cached) this.render(cached.games); // stale: show it instantly, refresh in the background
+    else this.setNote("Loading library…");
     try {
       const res = await this.fetchAstra(ASTRA_ORIGIN + "/api/cg/games", { cache: "no-store" });
       const data = await res.json();
@@ -85,8 +87,7 @@ export class Hub {
       this.render(games);
     } catch (e) {
       console.warn("[hub] Astra list failed:", e && e.message);
-      if (cached) this.render(cached.games);
-      else this.setNote("Couldn't load the Astra library.", true);
+      if (!cached) this.setNote("Couldn't load the library.", true);
     }
   }
 
@@ -122,6 +123,15 @@ export class Hub {
     this.pump();
   }
 
+  /** Icons persist in Cache Storage so they don't re-download every visit. Failures just fall back to the network. */
+  async cachedIcon(path) {
+    try { const r = await (await caches.open(ICON_CACHE)).match("/__astra" + path); return r ? await r.blob() : null; } catch { return null; }
+  }
+
+  async storeIcon(path, blob) {
+    try { await (await caches.open(ICON_CACHE)).put("/__astra" + path, new Response(blob, { headers: { "Content-Type": blob.type } })); } catch {}
+  }
+
   applyIcon(art, url) {
     art.style.backgroundImage = `url("${url}")`;
     art.classList.add("has-img");
@@ -135,9 +145,14 @@ export class Hub {
       (async () => {
         try {
           if (!this.icons.has(path)) {
-            const res = await this.fetchAstra(ASTRA_ORIGIN + path);
-            if (!res.ok) throw new Error(String(res.status));
-            this.icons.set(path, URL.createObjectURL(await res.blob()));
+            let blob = await this.cachedIcon(path);
+            if (!blob) {
+              const res = await this.fetchAstra(ASTRA_ORIGIN + path);
+              if (!res.ok) throw new Error(String(res.status));
+              blob = await res.blob();
+              this.storeIcon(path, blob);
+            }
+            this.icons.set(path, URL.createObjectURL(blob));
           }
           this.applyIcon(art, this.icons.get(path));
         } catch (e) { /* keep the lettered placeholder */ }
