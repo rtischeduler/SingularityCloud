@@ -1,0 +1,47 @@
+name: Crawl ref
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_files:
+        description: "Max files to crawl"
+        default: "2000"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: crawl-ref
+  cancel-in-progress: true
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create session and crawl app into ref/
+        env:
+          MAX_FILES: ${{ inputs.max_files }}
+        run: |
+          rm -rf ref
+          python scripts/crawl_ref.py
+
+      - name: Commit ref/ to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A ref
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Update ref/ crawl of hosted app"
+            git pull --rebase origin main
+            git push origin main
+          fi
