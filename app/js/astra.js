@@ -1,29 +1,149 @@
-/**
- * Astra sessions: a small direct client for Astra's cloud-gaming API (launch -> status -> WebRTC answer -> input).
- * Every request goes through the injected `fetchAstra` (the Singuloxy proxy); WebRTC media itself is peer-to-peer/TURN.
- * Supported: games whose launch returns a WebRTC offer (offerSdp). Other stream types report "not supported yet".
- * No DOM access at import time, so the pure helpers are unit-testable (scripts/astra.test.mjs).
- */
 import { AstraRelay, BnPlayer, SgPlayer, probeTransport } from "./astra-streams.js";
 
 export const ASTRA_ORIGIN = "https://astra-education.top";
-
-/* ------------------------------ pure helpers ------------------------------ */
 
 export async function sha256hex(text) {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Proof-of-work for /api/cg/quiz: find n in [0, maxnumber] with sha256(salt + n) === challenge. Returns n or null. */
+function makeSearcher() {
+  const K = new Uint32Array([
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ]);
+  const w = new Uint32Array(64);
+  const out = new Int32Array(8);
+
+  function digest(m, len) {
+    const total = (((len + 8) >> 6) + 1) << 6;
+    m[len] = 128;
+    m.fill(0, len + 1, total);
+    const bits = len * 8;
+    m[total - 4] = bits >>> 24;
+    m[total - 3] = (bits >>> 16) & 255;
+    m[total - 2] = (bits >>> 8) & 255;
+    m[total - 1] = bits & 255;
+    let a0 = 0x6a09e667, b0 = 0xbb67ae85, c0 = 0x3c6ef372, d0 = 0xa54ff53a, e0 = 0x510e527f, f0 = 0x9b05688c, g0 = 0x1f83d9ab, h0 = 0x5be0cd19;
+    for (let o = 0; o < total; o += 64) {
+      for (let i = 0; i < 16; i++) {
+        const p = o + (i << 2);
+        w[i] = (m[p] << 24) | (m[p + 1] << 16) | (m[p + 2] << 8) | m[p + 3];
+      }
+      for (let i = 16; i < 64; i++) {
+        const x = w[i - 15], y = w[i - 2];
+        const s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
+        const s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+      }
+      let a = a0, b = b0, c = c0, d = d0, e = e0, f = f0, g = g0, h = h0;
+      for (let i = 0; i < 64; i++) {
+        const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+        const ch = (e & f) ^ (~e & g);
+        const t1 = (h + S1 + ch + K[i] + w[i]) | 0;
+        const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+        const mj = (a & b) ^ (a & c) ^ (b & c);
+        const t2 = (S0 + mj) | 0;
+        h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+      }
+      a0 = (a0 + a) | 0; b0 = (b0 + b) | 0; c0 = (c0 + c) | 0; d0 = (d0 + d) | 0;
+      e0 = (e0 + e) | 0; f0 = (f0 + f) | 0; g0 = (g0 + g) | 0; h0 = (h0 + h) | 0;
+    }
+    out[0] = a0; out[1] = b0; out[2] = c0; out[3] = d0; out[4] = e0; out[5] = f0; out[6] = g0; out[7] = h0;
+  }
+
+  return function searchRange(challenge, salt, start, end) {
+    if (!/^[0-9a-f]{64}$/.test(challenge) || !/^[\x20-\x7e]*$/.test(salt)) return null;
+    const target = new Int32Array(8);
+    for (let i = 0; i < 8; i++) target[i] = parseInt(challenge.slice(i * 8, i * 8 + 8), 16) | 0;
+    const len = salt.length;
+    const buf = new Uint8Array((((len + 24) >> 6) * 64) + 64);
+    for (let i = 0; i < len; i++) buf[i] = salt.charCodeAt(i);
+    for (let n = Math.max(0, start); n <= end; n++) {
+      const s = String(n);
+      for (let i = 0; i < s.length; i++) buf[len + i] = s.charCodeAt(i);
+      digest(buf, len + s.length);
+      if (out[0] === target[0] && out[1] === target[1] && out[2] === target[2] && out[3] === target[3] && out[4] === target[4] && out[5] === target[5] && out[6] === target[6] && out[7] === target[7]) return n;
+    }
+    return null;
+  };
+}
+
+export const searchRange = makeSearcher();
+
+const WORKER_SOURCE = `const search=(${makeSearcher.toString()})();self.onmessage=(e)=>{const d=e.data;let n=null;try{n=search(d.challenge,d.salt,d.start,d.end)}catch(_){}self.postMessage({number:n})};`;
+
+const searchable = (q) => /^[0-9a-f]{64}$/.test(q.challenge) && /^[\x20-\x7e]*$/.test(q.salt);
+
+function workerCount() {
+  const n = (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 4;
+  return Math.max(1, Math.min(8, n - 1));
+}
+
+function solveWithWorkers(q, timeout = 240000) {
+  return new Promise((ok, no) => {
+    const count = workerCount();
+    const span = Math.ceil((q.maxnumber + 1) / count);
+    const workers = [];
+    const url = URL.createObjectURL(new Blob([WORKER_SOURCE], { type: "text/javascript" }));
+    let pending = count, done = false;
+    const timer = setTimeout(() => finish(no, new Error("quiz worker timed out")), timeout);
+    function finish(fn, value) {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      workers.forEach((w) => { try { w.terminate(); } catch {} });
+      URL.revokeObjectURL(url);
+      fn(value);
+    }
+    try {
+      for (let i = 0; i < count; i++) {
+        const w = new Worker(url);
+        workers.push(w);
+        w.onmessage = (e) => {
+          if (typeof e.data?.number === "number") finish(ok, e.data.number);
+          else if (--pending === 0) finish(ok, null);
+        };
+        w.onerror = (e) => { e.preventDefault?.(); finish(no, new Error("quiz worker failed")); };
+        const start = i * span;
+        w.postMessage({ challenge: q.challenge, salt: q.salt, start, end: Math.min(q.maxnumber, start + span - 1) });
+      }
+    } catch (e) {
+      finish(no, e);
+    }
+  });
+}
+
+async function solveInline(q, chunk = 50000) {
+  for (let start = 0; start <= q.maxnumber; start += chunk) {
+    const n = searchRange(q.challenge, q.salt, start, Math.min(q.maxnumber, start + chunk - 1));
+    if (n !== null) return n;
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  return null;
+}
+
 export async function solveQuiz(q, digest = sha256hex, chunk = 2000) {
   if (q.algorithm && !/^sha-?256$/i.test(q.algorithm)) throw new Error("unsupported quiz algorithm");
+  if (searchable(q)) {
+    if (typeof Worker !== "undefined") {
+      try { return await solveWithWorkers(q); } catch {}
+    }
+    return solveInline(q);
+  }
   for (let start = 0; start <= q.maxnumber; start += chunk) {
     const end = Math.min(q.maxnumber, start + chunk - 1);
     const jobs = [];
     for (let n = start; n <= end; n++) jobs.push(digest(q.salt + n));
     const i = (await Promise.all(jobs)).indexOf(q.challenge);
     if (i >= 0) return start + i;
+    await new Promise((r) => setTimeout(r, 0));
   }
   return null;
 }
@@ -32,7 +152,6 @@ export function quizPayload(q, number) {
   return btoa(JSON.stringify({ algorithm: q.algorithm, challenge: q.challenge, number, salt: q.salt, signature: q.signature }));
 }
 
-/** "a=1; Path=/, b=2; Expires=Wed, 01 Jan 2031 00:00:00 GMT" -> { a: "1", b: "2" } (name=value pairs only). */
 export function parseSetCookie(header) {
   const out = {};
   if (!header) return out;
@@ -44,7 +163,14 @@ export function parseSetCookie(header) {
   return out;
 }
 
-/** Control-channel wire format (matches Astra's own client). */
+export function statusText(d) {
+  if (d.statusText && String(d.statusText).trim()) return String(d.statusText);
+  if (typeof d.queuePosition === "number") return `Queue position: ${d.queuePosition}`;
+  if (d.status === "ready") return "Ready. Entering stream…";
+  if (d.status === "launching") return "Preparing stream";
+  return "Waiting in queue…";
+}
+
 export const WIRE = { MOUSE: 41, MOVE: 0, L_DOWN: 1, L_UP: 2, M_DOWN: 3, M_UP: 4, R_DOWN: 5, R_UP: 6, WHEEL: 11, KEY_DOWN: 101, KEY_UP: 102, TEXT: 103, RANGE: 32767 };
 export function frame(type, ints) {
   const buf = new ArrayBuffer(4 + 4 * ints.length), v = new Int32Array(buf);
@@ -66,7 +192,6 @@ export function textFrame(ch) {
 export const hasTurn = (servers) => Array.isArray(servers) && servers.some((s) => (Array.isArray(s.urls) ? s.urls : [s.urls]).some((u) => /^turns?:/i.test(String(u))));
 const STUN = [{ urls: "stun:stun.l.google.com:19302" }];
 
-/** Same relay choice as Astra's client: edge relay, else their TURN relay, else a plain connection. */
 export function rtcConfig(l) {
   if (l.relayVia === "edge" && hasTurn(l.edgeServers)) return { iceServers: l.edgeServers, iceTransportPolicy: "relay" };
   if (hasTurn(l.iceServers) && (l.preferRelay ?? true)) return { iceServers: l.iceServers, iceTransportPolicy: "relay" };
@@ -74,10 +199,7 @@ export function rtcConfig(l) {
   return { iceServers: hasTurn(l.edgeServers) ? [...STUN, ...l.edgeServers] : STUN };
 }
 
-/* --------------------------------- client --------------------------------- */
-
 export class AstraClient {
-  /** @param {(url: string, init?: object) => Promise<Response>} fetchAstra */
   constructor(fetchAstra) {
     this.fetchAstra = fetchAstra;
     this.cookies = {};
@@ -102,7 +224,6 @@ export class AstraClient {
     return this.json(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   }
 
-  /** Fetch + solve the launch challenge. Resolves to the payload string, or null when none is required. */
   async quiz() {
     const { res, data } = await this.json("/api/cg/quiz");
     if (!res.ok || !data?.ok) throw new Error("Launch check unavailable.");
@@ -131,27 +252,45 @@ export class AstraClient {
     return data;
   }
 
-  /** Wait until the launch carries an offer (some launches are queued first). */
-  async ready(launch, onStatus = () => {}, signal) {
-    let l = launch;
-    const id = l.sessionId;
-    for (let i = 0; i < 100 && !l.offerSdp; i++) {
-      if (signal?.aborted) throw new Error("cancelled");
-      await new Promise((r) => setTimeout(r, 1500));
-      const { res, data } = await this.json(`/api/cg/status?sessionId=${encodeURIComponent(id)}`);
-      if (res.ok && data?.ok) { l = { ...l, ...data }; onStatus(String(data.status || "starting")); }
-      else if (data && data.error) throw new Error(data.error);
+  async status(sessionId) {
+    const res = await this.req(`/api/cg/status?sessionId=${encodeURIComponent(sessionId)}`);
+    const isJson = (res.headers.get("content-type") || "").includes("application/json");
+    const data = isJson ? await res.json().catch(() => null) : null;
+    if (!data) return { ok: true, sessionId, status: "pending", ready: false };
+    if (!res.ok || !data.ok) {
+      const err = new Error(data.error || "Status failed");
+      err.reported = true;
+      throw err;
     }
-    if (!l.offerSdp) throw new Error(l.status && l.status !== "pending" ? "This game uses a stream type we don't support yet." : "Timed out waiting for the game to start.");
-    return l;
+    return data;
+  }
+
+  async waitReady(sessionId, { onStatus = () => {}, alive = () => {}, timeout = 300000, interval = 2000 } = {}) {
+    const deadline = Date.now() + timeout;
+    let misses = 0;
+    for (;;) {
+      await new Promise((r) => setTimeout(r, interval));
+      alive();
+      let d;
+      try {
+        d = await this.status(sessionId);
+        misses = 0;
+      } catch (e) {
+        if (e.reported || ++misses > 3) throw e;
+        continue;
+      }
+      alive();
+      if (d.error) throw new Error(d.error);
+      onStatus(statusText(d));
+      if (d.ready) return d;
+      if (Date.now() > deadline) throw new Error("Timed out waiting for the game to start.");
+    }
   }
 
   stop(sessionId) {
     return this.post("/api/cg/stop", { sessionId }).catch(() => {});
   }
 }
-
-/* --------------------------------- player --------------------------------- */
 
 export class AstraPlayer {
   constructor({ client, launch, video, onStatus = () => {}, onEnded = () => {}, onError = () => {} }) {
@@ -237,7 +376,6 @@ export class AstraPlayer {
     }
   }
 
-  /** Pointer position -> 0..32767 within the video picture (letterbox-aware). */
   coords(e) {
     const v = this.video, r = v.getBoundingClientRect();
     const w = v.videoWidth || r.width, h = v.videoHeight || r.height;
@@ -304,15 +442,9 @@ export class AstraPlayer {
   }
 }
 
-/* ------------------------------ page controller ------------------------------ */
-
 const WS_URL = ASTRA_ORIGIN.replace(/^http/, "ws") + "/live-lesson";
-const STEP_TOTAL = 7;
+const STEP_TOTAL = 8;
 
-/**
- * Hub card click -> launch -> relay attach -> the stream type the host picks -> stream screen.
- * Shares the page's loading screen (with its step counter) with FreezeNova. Leaving returns to the hub.
- */
 export class AstraSessions {
   constructor({ fetchAstra, webSocket, show, loader, doc = document, notify = console.warn }) {
     this.client = new AstraClient(fetchAstra);
@@ -341,7 +473,11 @@ export class AstraSessions {
       const sid = (this.sessionId = launch.sessionId ?? launch.apiSessionId);
       if (!sid) throw new Error("Launch returned no session.");
 
-      step(3, "Connecting to relay");
+      step(3, "Preparing your session");
+      await this.client.waitReady(sid, { onStatus: (t) => this.loader.text(t), alive });
+      alive();
+
+      step(4, "Connecting to relay");
       const relay = (this.relay = new AstraRelay(await this.webSocket()));
       const jar = Object.entries(this.client.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
       await relay.connect(WS_URL, jar ? { Cookie: jar } : undefined);
@@ -349,15 +485,15 @@ export class AstraSessions {
       const result = relay.waitLaunchResult();
       result.catch(() => {});
       let cf;
-      if (launch.game?.provider === "secondary") { step(3, "Checking your connection"); cf = await probeTransport(); alive(); }
+      if (launch.game?.provider === "secondary") { step(4, "Checking your connection"); cf = await probeTransport(); alive(); }
       relay.attach(sid, cf);
 
-      step(4, "Waiting for a server");
+      step(5, "Waiting for a server");
       const K = await result;
       alive();
       if (K.transport === "unavailable") throw new Error("No server available right now. Try again shortly.");
 
-      step(5, "Negotiating stream");
+      step(6, "Negotiating stream");
       const common = { onStatus: (t) => this.loader.text(t), onEnded: (why) => { this.notify("Session ended: " + why); this.leave(); } };
       if (K.provider === "tertiary") throw new Error("This game uses a stream type we don't support yet.");
       if (K.provider === "quaternary" && K.ng) {
@@ -368,17 +504,17 @@ export class AstraSessions {
         this.video.muted = true;
         this.player = new SgPlayer({ relay, video: this.video, iceServers: K.iceServers ?? [], iceTransportPolicy: K.iceTransportPolicy, onLive: () => { this.video.muted = false; }, onEnded: common.onEnded });
         await this.player.start();
-        step(6, "Starting playback");
+        step(7, "Starting playback");
         await this.video.play().catch(() => {});
       } else {
         this.player = new BnPlayer({ client: this.client, relay, video: this.video, relativeMouse: K.stream?.inputDevice === "relative", ...common });
         await this.player.start();
       }
       alive();
-      step(6, "Starting playback");
+      step(7, "Starting playback");
       await new Promise((ok) => { if (!this.video.paused && this.video.readyState >= 3) return ok(); this.video.addEventListener("playing", () => ok(), { once: true }); setTimeout(ok, 15000); });
       alive();
-      step(7, "Ready");
+      step(8, "Ready");
       this.video.play?.().catch(() => {});
       this.loader.hide();
     } catch (e) {

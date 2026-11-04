@@ -1,6 +1,5 @@
-// Unit tests for the Astra client's pure helpers (run: node scripts/astra.test.mjs). No network, no DOM.
 import assert from "node:assert/strict";
-import { solveQuiz, sha256hex, quizPayload, parseSetCookie, frame, keyFrame, textFrame, rtcConfig, hasTurn } from "../app/js/astra.js";
+import { solveQuiz, sha256hex, quizPayload, parseSetCookie, frame, keyFrame, textFrame, rtcConfig, hasTurn, searchRange, statusText, AstraClient } from "../app/js/astra.js";
 
 const salt = "abc?x=1", target = 1234;
 const q = { algorithm: "SHA-256", salt, challenge: await sha256hex(salt + target), maxnumber: 5000, signature: "sig" };
@@ -8,6 +7,24 @@ assert.equal(await solveQuiz(q), target);
 assert.equal(await solveQuiz({ ...q, challenge: "0".repeat(64), maxnumber: 50 }), null);
 await assert.rejects(() => solveQuiz({ ...q, algorithm: "MD5" }));
 assert.deepEqual(JSON.parse(atob(quizPayload(q, 7))), { algorithm: "SHA-256", challenge: q.challenge, number: 7, salt, signature: "sig" });
+assert.equal(searchRange(q.challenge, salt, 0, 5000), target);
+assert.equal(searchRange(q.challenge, salt, target + 1, 5000), null);
+assert.equal(searchRange("zz", salt, 0, 10), null);
+const longSalt = "x".repeat(70) + "?y=2";
+assert.equal(searchRange(await sha256hex(longSalt + 987), longSalt, 900, 1000), 987);
+
+assert.equal(statusText({ queuePosition: 3 }), "Queue position: 3");
+assert.equal(statusText({ status: "ready" }), "Ready. Entering stream…");
+assert.equal(statusText({ statusText: "Booting" }), "Booting");
+assert.equal(statusText({}), "Waiting in queue…");
+const seq = [{ ok: true, status: "queued", queuePosition: 2 }, { ok: true, status: "ready", ready: true }];
+const fakeFetch = async () => ({ ok: true, headers: { get: (k) => (k === "content-type" ? "application/json" : null) }, json: async () => seq.shift() });
+const seen = [];
+const polled = await new AstraClient(fakeFetch).waitReady("s1", { interval: 1, onStatus: (t) => seen.push(t) });
+assert.equal(polled.ready, true);
+assert.deepEqual(seen, ["Queue position: 2", "Ready. Entering stream…"]);
+const rejectingFetch = async () => ({ ok: false, headers: { get: () => "application/json" }, json: async () => ({ ok: false, error: "no such session" }) });
+await assert.rejects(() => new AstraClient(rejectingFetch).waitReady("s1", { interval: 1 }), /no such session/);
 
 assert.deepEqual(parseSetCookie("a=1; Path=/; HttpOnly, b=2; Expires=Wed, 01 Jan 2031 00:00:00 GMT"), { a: "1", b: "2" });
 assert.deepEqual(parseSetCookie(null), {});
@@ -25,14 +42,13 @@ assert.equal(rtcConfig({ relayVia: "edge", edgeServers: turn, iceServers: [] }).
 assert.ok(rtcConfig({}).iceServers.length);
 console.log("astra tests passed");
 
-// ---- relay + stream helpers (astra-streams.js) ----
 import { AstraRelay, NegoRpc, iceList, bnKey, bnClick, bnButton, bnMouseMove, pictureRect, sgKeyFrame, sgMouseFrame } from "../app/js/astra-streams.js";
 class FakeWS { constructor() { this.readyState = 1; this.sent = []; } send(d) { this.sent.push(d); } close() {} }
 const relay = new AstraRelay(FakeWS); relay.ws = new FakeWS();
 const launched = relay.waitLaunchResult();
 relay.message(JSON.stringify({ t: "launchReady", session: { provider: "quaternary", ng: { offerSdp: "x" } } }));
 assert.equal((await launched).provider, "quaternary");
-relay.message(JSON.stringify({ t: "sig", msg: { type: "config" } }));          // buffered until a handler exists
+relay.message(JSON.stringify({ t: "sig", msg: { type: "config" } }));
 const got = []; relay.setSigHandler((m) => got.push(m)); assert.deepEqual(got, [{ type: "config" }]);
 relay.attach("sid", true); assert.deepEqual(JSON.parse(relay.ws.sent.pop()), { t: "attach", apiSessionId: "sid", cfTurn: true });
 relay.sendInputOut("ping;"); assert.deepEqual([...relay.ws.sent.pop()], [1, ...new TextEncoder().encode("ping;")]);
