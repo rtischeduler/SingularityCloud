@@ -1,0 +1,28 @@
+name: Probe backend
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: /status with a foreign Origin
+        run: |
+          curl -si --max-time 20 https://static.cdn-a.org/status -H "Origin: https://rtischeduler.github.io" | head -25
+      - name: /status preflight
+        run: |
+          curl -si --max-time 20 -X OPTIONS https://static.cdn-a.org/status \
+            -H "Origin: https://rtischeduler.github.io" \
+            -H "Access-Control-Request-Method: GET" | head -20
+      - name: /ws upgrade, foreign Origin
+        run: |
+          curl -si --max-time 10 https://static.cdn-a.org/ws \
+            -H "Connection: Upgrade" -H "Upgrade: websocket" \
+            -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+            -H "Origin: https://rtischeduler.github.io" | head -15 || true
+      - name: /ws upgrade, no Origin
+        run: |
+          curl -si --max-time 10 https://static.cdn-a.org/ws \
+            -H "Connection: Upgrade" -H "Upgrade: websocket" \
+            -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" | head -15 || true
