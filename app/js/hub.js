@@ -11,7 +11,7 @@ const CACHE_TTL = 60 * 60 * 1000;      // fresh: skip the network
 const ICON_CACHE = "sc_astra_icons_v1"; // Cache Storage bucket for icon images
 const ICON_CONCURRENCY = 4;
 
-/** Accepts {ok, games:[...]} or a bare array. Drops blanks, Astra's own Roblox (ours is FreezeNova), dupes; sorts by name. */
+/** Accepts {ok, games:[...]} or a bare array. Drops blanks and dupes; sorts by name. Astra's own Roblox is kept (FreezeNova is the separate card above it). */
 export function normalizeGames(raw, icons = ASTRA_ICONS) {
   const list = Array.isArray(raw) ? raw : raw && Array.isArray(raw.games) ? raw.games : [];
   const seen = new Set(), out = [];
@@ -19,7 +19,7 @@ export function normalizeGames(raw, icons = ASTRA_ICONS) {
     if (!g || typeof g !== "object") continue;
     const id = String(g.gameId ?? g.id ?? "").trim();
     const name = String(g.gameName ?? g.name ?? "").trim();
-    if (!id || !name || seen.has(id) || /^(ng_)?roblox$/i.test(id)) continue;
+    if (!id || !name || seen.has(id)) continue;
     seen.add(id);
     out.push({ id, name, icon: icons[id] || null });
   }
@@ -107,7 +107,11 @@ export class Hub {
       if (g.icon) art.dataset.icon = g.icon;
       const h = d.createElement("h3"); h.textContent = g.name;
       const tag = d.createElement("div"); tag.className = "play-tag"; tag.textContent = "Play now";
-      card.append(art, h, tag);
+      card.append(art, h);
+      if (/^(ng_)?roblox$/i.test(g.id)) { // two Roblox cards (FreezeNova + Astra's), so say which is which
+        const src = d.createElement("div"); src.className = "pkg-name"; src.textContent = "Astra"; card.append(src);
+      }
+      card.append(tag);
       frag.append(card);
     }
     this.grid.querySelectorAll(".game-card.astra").forEach((c) => c.remove());

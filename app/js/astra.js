@@ -1,4 +1,5 @@
 import { AstraRelay, BnPlayer, SgPlayer, probeTransport } from "./astra-streams.js";
+import { StreamFooter, SESSION_MS, parseDeadline, clockSkew } from "./footer.js";
 
 export const ASTRA_ORIGIN = "https://astra-education.top";
 
@@ -203,6 +204,7 @@ export class AstraClient {
   constructor(fetchAstra) {
     this.fetchAstra = fetchAstra;
     this.cookies = {};
+    this.skew = 0; // server clock - our clock (ms); only non-zero when the clocks are clearly apart
   }
 
   async req(path, init = {}) {
@@ -211,6 +213,7 @@ export class AstraClient {
     if (jar) headers.Cookie = jar;
     const res = await this.fetchAstra(ASTRA_ORIGIN + path, { cache: "no-store", ...init, headers });
     try { Object.assign(this.cookies, parseSetCookie(res.headers.get("set-cookie"))); } catch {}
+    try { this.skew = clockSkew(res.headers.get("date")); } catch {}
     return res;
   }
 
@@ -451,10 +454,7 @@ export class AstraSessions {
     Object.assign(this, { webSocket, show, loader, doc, notify });
     this.video = doc.getElementById("astra-video");
     this.token = 0;
-    doc.getElementById("astra-leave")?.addEventListener("click", () => this.leave());
-    doc.getElementById("astra-fullscreen")?.addEventListener("click", () => {
-      if (doc.fullscreenElement) doc.exitFullscreen(); else doc.documentElement.requestFullscreen?.().catch(() => {});
-    });
+    this.footer = new StreamFooter(doc.getElementById("screen-astra"), { doc, onExit: () => this.leave() });
     doc.defaultView?.addEventListener("beforeunload", () => this.sessionId && navigator.sendBeacon?.(ASTRA_ORIGIN + "/api/cg/stop", new Blob([JSON.stringify({ sessionId: this.sessionId })], { type: "application/json" })));
   }
 
@@ -466,6 +466,7 @@ export class AstraSessions {
     const step = (i, text) => this.loader.step(i, STEP_TOTAL, text);
     this.loader.show("Starting " + game.name, { cancel: () => this.leave() });
     this.show("screen-astra");
+    this.footer.reset({ title: game.name });
     try {
       step(1, "Running launch check");
       const launch = await this.client.launch(game.id, () => step(2, "Launching " + game.name));
@@ -498,15 +499,18 @@ export class AstraSessions {
       if (K.provider === "tertiary") throw new Error("This game uses a stream type we don't support yet.");
       if (K.provider === "quaternary" && K.ng) {
         relay.close();
+        this.startTimer(parseDeadline(K.ng.edgeEndsAt), true);
         this.player = new AstraPlayer({ client: this.client, launch: { ...K.ng, sessionId: sid }, video: this.video, ...common, onError: (e) => { this.notify(e.message); this.leave(); } });
         await this.player.start();
       } else if (K.provider === "secondary") {
         this.video.muted = true;
+        this.startTimer(Date.now() + SESSION_MS);
         this.player = new SgPlayer({ relay, video: this.video, iceServers: K.iceServers ?? [], iceTransportPolicy: K.iceTransportPolicy, onLive: () => { this.video.muted = false; }, onEnded: common.onEnded });
         await this.player.start();
         step(7, "Starting playback");
         await this.video.play().catch(() => {});
       } else {
+        this.startTimer(null);
         this.player = new BnPlayer({ client: this.client, relay, video: this.video, relativeMouse: K.stream?.inputDevice === "relative", ...common });
         await this.player.start();
       }
@@ -515,6 +519,7 @@ export class AstraSessions {
       await new Promise((ok) => { if (!this.video.paused && this.video.readyState >= 3) return ok(); this.video.addEventListener("playing", () => ok(), { once: true }); setTimeout(ok, 15000); });
       alive();
       step(8, "Ready");
+      this.footer.watchVideo(this.video);
       this.video.play?.().catch(() => {});
       this.loader.hide();
     } catch (e) {
@@ -524,8 +529,16 @@ export class AstraSessions {
     }
   }
 
+  /** Counts down to `deadline` (epoch ms) when the stream has one, otherwise shows elapsed session time. */
+  startTimer(deadline, fromServer = false) {
+    // A server-supplied end time is corrected for clock offset; our own start + 30 min is already on our clock.
+    if (deadline) this.footer.startCountdown(deadline, fromServer ? this.client.skew : 0);
+    else this.footer.startElapsed();
+  }
+
   async leave() {
     this.token++;
+    this.footer.reset();
     this.player?.dispose(); this.player = null;
     try { this.relay?.close(); } catch {} this.relay = null;
     const id = this.sessionId; this.sessionId = null;

@@ -4,6 +4,7 @@ import { MediasoupTransport } from "./mediasoup-transport.js";
 import { WebRTCClient } from "./webrtc.js";
 import { H264Decoder } from "./decoder.js";
 import { InputCapture } from "./input.js";
+import { StreamFooter } from "./footer.js";
 
 export class App {
   constructor(opts = {}) {
@@ -40,9 +41,11 @@ export class App {
       this.ws?.close();
     });
 
-    document.getElementById("btn-fullscreen")?.addEventListener("click", () => {
-      if (document.fullscreenElement) document.exitFullscreen();
-      else document.documentElement.requestFullscreen?.().catch(() => {});
+    // FreezeNova has no session limit, stats or audio controls, so those items are greyed out.
+    this.footer = new StreamFooter(document.getElementById("screen-game"), {
+      title: "Roblox · FreezeNova",
+      off: ["timer", "stats", "mute"],
+      onExit: () => this.resetToSelect(),
     });
   }
 

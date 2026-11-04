@@ -6,7 +6,7 @@ const out = normalizeGames({ ok: true, games: [
   { gameId: "b2", gameName: "beta" }, { gameId: "a1", gameName: "Alpha" }, { gameId: "a1", gameName: "Alpha dup" },
   { gameId: "ng_roblox", gameName: "Roblox" }, { gameId: "", gameName: "x" }, null,
 ] }, icons);
-assert.deepEqual(out.map((g) => g.id), ["a1", "b2"]);
+assert.deepEqual(out.map((g) => g.id), ["a1", "b2", "ng_roblox"]); // Astra's Roblox is kept now
 assert.equal(out[0].icon, "/cg/a-launch.jpg");
 assert.equal(out[1].icon, null);
 assert.deepEqual(normalizeGames([{ id: "z", name: "Z" }], {}).map((g) => g.name), ["Z"]);
