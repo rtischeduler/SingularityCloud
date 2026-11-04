@@ -52,6 +52,7 @@
     .ld-fill { position: relative; width: 100%; height: 100%; transform: scaleX(0); transform-origin: left; background: var(--ink); transition: transform .5s cubic-bezier(.22,1,.36,1); }
     .ld-status { font-size: .8rem; opacity: .6; min-height: 1.2em; font-variant-numeric: tabular-nums; text-align: center; }
     #loading-screen.failed .ld-status { color: var(--danger); opacity: 1; }
+    .ld-count { font-size: .72rem; opacity: .45; min-height: 1em; font-variant-numeric: tabular-nums; letter-spacing: .08em; }
     .ld-retry { margin-top: .4rem; background: none; border: 1px solid var(--line-hi); border-radius: 10px; padding: 9px 20px; cursor: pointer; font-size: .85rem; }
     .ld-retry:hover { background: var(--surface); }
     @media (prefers-reduced-motion: reduce) { .ld-logo, .ld-arms, .ld-core { animation: none; } .ld-arms { stroke-dashoffset: 0; } }
@@ -85,6 +86,8 @@
     <div class="ld-word">Singularity<span>Cloud</span></div>
     <div class="ld-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="ld-fill" id="ld-fill"></div></div>
     <div class="ld-status" id="ld-status" aria-live="polite">Loading</div>
+    <div class="ld-count" id="ld-count" aria-hidden="true"></div>
+    <button class="ld-retry" id="ld-cancel" type="button" hidden>Cancel</button>
     <button class="ld-retry" id="ld-retry" type="button" hidden>Try again</button>
   </div>
 
@@ -147,11 +150,6 @@
   <!-- Astra game stream -->
   <div id="screen-astra" class="screen">
     <div class="game-viewport"><video id="astra-video" autoplay playsinline></video></div>
-    <div id="astra-overlay" class="game-overlay">
-      <svg class="ld-logo" aria-hidden="true"><use href="#sc-logo"/></svg>
-      <div class="ld-word">Singularity<span>Cloud</span></div>
-      <p id="astra-status">Launching</p>
-    </div>
     <div class="hud">
       <button id="astra-fullscreen" class="hud-btn" type="button" title="Toggle fullscreen" aria-label="Toggle fullscreen">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>

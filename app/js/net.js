@@ -38,6 +38,10 @@ export const mayUseProxy = () => FORCE !== "direct";
 
 /** Fetch any URL through the proxy (used for the Astra catalog and icons; never tries a direct request). */
 export async function astraFetch(url, init) {
-  mode = "proxy";
-  return (await proxy()).libcurl.fetch(url, init);
+  return (await proxy()).libcurl.fetch(url, init); // leaves the FreezeNova backend's direct/proxy mode alone
+}
+
+/** Proxied WebSocket constructor for Astra's relay (does not change the backend mode either). */
+export async function astraWebSocket() {
+  return (await proxy()).libcurl.WebSocket;
 }

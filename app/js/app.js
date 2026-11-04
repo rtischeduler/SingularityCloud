@@ -6,10 +6,12 @@ import { H264Decoder } from "./decoder.js";
 import { InputCapture } from "./input.js";
 
 export class App {
-  /** @param {{ ensureSession?: (onStep?: (i: number) => void) => Promise<void> }} [opts] */
+  /** @param {{ ensureSession?: (onStep?: (i: number, total: number, text: string) => void) => Promise<void>, loader?: import("./loader.js").Loader }} [opts] */
   constructor(opts = {}) {
     /** Creates the FreezeNova session; only called when the player clicks Roblox. */
     this.ensureSession = opts.ensureSession || (async () => {});
+    /** Shared loading screen (app/js/loader.js). */
+    this.loader = opts.loader || null;
     /** @type {WebSocketClient|null} */
     this.ws = null;
     /** @type {MediasoupTransport|null} */
@@ -92,26 +94,23 @@ export class App {
   }
 
   /* ---- Flow ---- */
-  /** Clicking FreezeNova Roblox: create the session now (not at page load), then join the queue. */
+  /** Clicking FreezeNova Roblox: create the session now (not at page load) on the shared loading screen, then join the queue. */
   async selectGame(gameId) {
     if (this._starting) return;
     this._starting = true;
-    const label = document.querySelector(".queue-label"), sub = document.getElementById("queue-total");
-    const pos = document.getElementById("queue-position");
-    const [l0, s0, p0] = [label.textContent, sub.textContent, pos.textContent];
-    label.textContent = "Starting a session"; pos.textContent = "…"; sub.textContent = "Checking your connection";
-    this.showScreen("screen-queue");
+    this.loader?.show("Starting a session");
     try {
-      await this.ensureSession((text) => { sub.textContent = text; });
+      await this.ensureSession((i, total, text) => this.loader?.step(i, total, text));
     } catch (e) {
       console.error("Session failed:", e);
+      this.loader?.hide();
       this.notify("Couldn't start a session. Check your connection and try again.");
       this.showScreen("screen-select");
       return;
     } finally {
       this._starting = false;
-      label.textContent = l0; sub.textContent = s0; pos.textContent = p0;
     }
+    this.loader?.hide();
     this._selectGame(gameId);
   }
 

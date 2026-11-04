@@ -24,3 +24,37 @@ assert.equal(rtcConfig({ iceServers: turn, preferRelay: false }).iceTransportPol
 assert.equal(rtcConfig({ relayVia: "edge", edgeServers: turn, iceServers: [] }).iceServers, turn);
 assert.ok(rtcConfig({}).iceServers.length);
 console.log("astra tests passed");
+
+// ---- relay + stream helpers (astra-streams.js) ----
+import { AstraRelay, NegoRpc, iceList, bnKey, bnClick, bnButton, bnMouseMove, pictureRect, sgKeyFrame, sgMouseFrame } from "../app/js/astra-streams.js";
+class FakeWS { constructor() { this.readyState = 1; this.sent = []; } send(d) { this.sent.push(d); } close() {} }
+const relay = new AstraRelay(FakeWS); relay.ws = new FakeWS();
+const launched = relay.waitLaunchResult();
+relay.message(JSON.stringify({ t: "launchReady", session: { provider: "quaternary", ng: { offerSdp: "x" } } }));
+assert.equal((await launched).provider, "quaternary");
+relay.message(JSON.stringify({ t: "sig", msg: { type: "config" } }));          // buffered until a handler exists
+const got = []; relay.setSigHandler((m) => got.push(m)); assert.deepEqual(got, [{ type: "config" }]);
+relay.attach("sid", true); assert.deepEqual(JSON.parse(relay.ws.sent.pop()), { t: "attach", apiSessionId: "sid", cfTurn: true });
+relay.sendInputOut("ping;"); assert.deepEqual([...relay.ws.sent.pop()], [1, ...new TextEncoder().encode("ping;")]);
+const waiting = relay.waitInputRelayReady(1000); relay.message(JSON.stringify({ t: "inputRelayReady" })); await waiting;
+const failing = relay.waitLaunchResult(); relay.message(JSON.stringify({ t: "launchErr", error: "boom" })); await assert.rejects(failing, /boom/);
+
+const rpc = new NegoRpc(relay); const pr = rpc.post("getConfig", { a: 1 });
+const out = JSON.parse(JSON.parse(relay.ws.sent.pop()).raw); assert.equal(out.method, "getConfig");
+relay.message(JSON.stringify({ t: "negoIn", raw: JSON.stringify({ cmd_id: out.cmd_id, json_data: { ok: 1 } }) })); assert.deepEqual(await pr, { ok: 1 });
+const pe = rpc.post("call", {}); const o2 = JSON.parse(JSON.parse(relay.ws.sent.pop()).raw);
+relay.message(JSON.stringify({ t: "negoIn", raw: JSON.stringify({ cmd_id: o2.cmd_id, json_data: { error: { message: "nope" } } }) })); await assert.rejects(pe, /nope/);
+assert.deepEqual(iceList({ iceServers: [1] }), [1]); assert.deepEqual(iceList(null), []);
+
+const wire = { Enter: "d" }, sdl = { Enter: 40, KeyA: 4, Unidentified: 0 };
+assert.deepEqual(JSON.parse(bnKey({ key: "a", code: "KeyA" }, true, wire, sdl)), { device: "keyboard", json_data: "61|0;", payload: { event: { sc: 4, pr: "0061" } } });
+assert.equal(JSON.parse(bnKey({ key: "Enter", code: "Enter" }, false, wire, sdl)).json_data, "0d|1;");
+assert.equal(bnKey({ key: "F13", code: "F13" }, true, wire, sdl), null);
+assert.equal(JSON.parse(bnClick(bnButton(1), true)).json_data, "M3|0;");
+assert.equal(JSON.parse(bnMouseMove(10, 20)).json_data, "xref:10|yref:20;");
+const pic = pictureRect({ left: 0, top: 0, width: 1000, height: 1000 }, 1600, 900);
+assert.deepEqual([Math.round(pic.top), Math.round(pic.height)], [219, 563]);
+const held = new Set(); const k1 = sgKeyFrame(held, 65, true); assert.equal(new DataView(k1).getUint16(4), 65);
+const k2 = new DataView(sgKeyFrame(held, 66, true)); assert.equal(k2.getUint16(7), 65); assert.equal(k2.getUint8(k2.byteLength - 1), 255);
+const mf = new DataView(sgMouseFrame(500, -500, 20000, -5, 1, -1)); assert.equal(mf.getInt8(8), 127); assert.equal(mf.getInt8(9), -127); assert.equal(mf.getUint16(4), 10000); assert.equal(mf.getUint16(6), 0);
+console.log("astra stream tests passed");

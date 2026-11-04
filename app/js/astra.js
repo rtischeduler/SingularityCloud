@@ -4,6 +4,8 @@
  * Supported: games whose launch returns a WebRTC offer (offerSdp). Other stream types report "not supported yet".
  * No DOM access at import time, so the pure helpers are unit-testable (scripts/astra.test.mjs).
  */
+import { AstraRelay, BnPlayer, SgPlayer, probeTransport } from "./astra-streams.js";
+
 export const ASTRA_ORIGIN = "https://astra-education.top";
 
 /* ------------------------------ pure helpers ------------------------------ */
@@ -110,9 +112,19 @@ export class AstraClient {
     return quizPayload(data.quiz, n);
   }
 
-  async launch(gameId) {
+  async getJson(path) {
+    const res = await this.req(path);
+    if (!res.ok) throw new Error(`${path} HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async launch(gameId, onQuizDone = () => {}) {
     let tz; try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch {}
-    const attempt = async () => this.post("/api/cg/launch", { gameId, ...(tz ? { tz } : {}), ...((q) => (q ? { quiz: q } : {}))(await this.quiz().catch(() => null)) });
+    const attempt = async () => {
+      const q = await this.quiz().catch(() => null);
+      onQuizDone();
+      return this.post("/api/cg/launch", { gameId, ...(tz ? { tz } : {}), ...(q ? { quiz: q } : {}) });
+    };
     let { res, data } = await attempt();
     if (res.status === 403 && data?.code === "QUIZ_FAILED") ({ res, data } = await attempt());
     if (!res.ok || !data?.ok) throw new Error(data?.error || "Launch failed");
@@ -294,14 +306,19 @@ export class AstraPlayer {
 
 /* ------------------------------ page controller ------------------------------ */
 
-/** Hub card click -> launch -> stream screen. `show(id)` switches screens; leaving returns to the hub. */
+const WS_URL = ASTRA_ORIGIN.replace(/^http/, "ws") + "/live-lesson";
+const STEP_TOTAL = 7;
+
+/**
+ * Hub card click -> launch -> relay attach -> the stream type the host picks -> stream screen.
+ * Shares the page's loading screen (with its step counter) with FreezeNova. Leaving returns to the hub.
+ */
 export class AstraSessions {
-  constructor({ fetchAstra, show, doc = document, notify = console.warn }) {
+  constructor({ fetchAstra, webSocket, show, loader, doc = document, notify = console.warn }) {
     this.client = new AstraClient(fetchAstra);
-    Object.assign(this, { show, doc, notify });
+    Object.assign(this, { webSocket, show, loader, doc, notify });
     this.video = doc.getElementById("astra-video");
-    this.status = doc.getElementById("astra-status");
-    this.overlay = doc.getElementById("astra-overlay");
+    this.token = 0;
     doc.getElementById("astra-leave")?.addEventListener("click", () => this.leave());
     doc.getElementById("astra-fullscreen")?.addEventListener("click", () => {
       if (doc.fullscreenElement) doc.exitFullscreen(); else doc.documentElement.requestFullscreen?.().catch(() => {});
@@ -309,41 +326,74 @@ export class AstraSessions {
     doc.defaultView?.addEventListener("beforeunload", () => this.sessionId && navigator.sendBeacon?.(ASTRA_ORIGIN + "/api/cg/stop", new Blob([JSON.stringify({ sessionId: this.sessionId })], { type: "application/json" })));
   }
 
-  say(t) { if (this.status) this.status.textContent = t; }
-
   async play(game) {
     if (this.busy) return;
     this.busy = true;
-    this.abort = new AbortController();
-    this.overlay.classList.remove("hidden");
-    this.say("Launching " + game.name);
+    const token = ++this.token;
+    const alive = () => { if (token !== this.token) throw new Error("cancelled"); };
+    const step = (i, text) => this.loader.step(i, STEP_TOTAL, text);
+    this.loader.show("Starting " + game.name, { cancel: () => this.leave() });
     this.show("screen-astra");
     try {
-      let launch = await this.client.launch(game.id);
-      this.sessionId = launch.sessionId;
-      launch = await this.client.ready(launch, (s) => this.say(s.charAt(0).toUpperCase() + s.slice(1) + "…"), this.abort.signal);
-      this.player = new AstraPlayer({
-        client: this.client, launch, video: this.video,
-        onStatus: (t) => this.say(t),
-        onEnded: (why) => { this.notify("Session ended: " + why); this.leave(); },
-        onError: (e) => { this.notify(e.message); this.leave(); },
-      });
-      await this.player.start();
+      step(1, "Running launch check");
+      const launch = await this.client.launch(game.id, () => step(2, "Launching " + game.name));
+      alive();
+      const sid = (this.sessionId = launch.sessionId ?? launch.apiSessionId);
+      if (!sid) throw new Error("Launch returned no session.");
+
+      step(3, "Connecting to relay");
+      const relay = (this.relay = new AstraRelay(await this.webSocket()));
+      const jar = Object.entries(this.client.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
+      await relay.connect(WS_URL, jar ? { Cookie: jar } : undefined);
+      alive();
+      const result = relay.waitLaunchResult();
+      result.catch(() => {});
+      let cf;
+      if (launch.game?.provider === "secondary") { step(3, "Checking your connection"); cf = await probeTransport(); alive(); }
+      relay.attach(sid, cf);
+
+      step(4, "Waiting for a server");
+      const K = await result;
+      alive();
+      if (K.transport === "unavailable") throw new Error("No server available right now. Try again shortly.");
+
+      step(5, "Negotiating stream");
+      const common = { onStatus: (t) => this.loader.text(t), onEnded: (why) => { this.notify("Session ended: " + why); this.leave(); } };
+      if (K.provider === "tertiary") throw new Error("This game uses a stream type we don't support yet.");
+      if (K.provider === "quaternary" && K.ng) {
+        relay.close();
+        this.player = new AstraPlayer({ client: this.client, launch: { ...K.ng, sessionId: sid }, video: this.video, ...common, onError: (e) => { this.notify(e.message); this.leave(); } });
+        await this.player.start();
+      } else if (K.provider === "secondary") {
+        this.video.muted = true;
+        this.player = new SgPlayer({ relay, video: this.video, iceServers: K.iceServers ?? [], iceTransportPolicy: K.iceTransportPolicy, onLive: () => { this.video.muted = false; }, onEnded: common.onEnded });
+        await this.player.start();
+        step(6, "Starting playback");
+        await this.video.play().catch(() => {});
+      } else {
+        this.player = new BnPlayer({ client: this.client, relay, video: this.video, relativeMouse: K.stream?.inputDevice === "relative", ...common });
+        await this.player.start();
+      }
+      alive();
+      step(6, "Starting playback");
+      await new Promise((ok) => { if (!this.video.paused && this.video.readyState >= 3) return ok(); this.video.addEventListener("playing", () => ok(), { once: true }); setTimeout(ok, 15000); });
+      alive();
+      step(7, "Ready");
       this.video.play?.().catch(() => {});
-      await new Promise((ok) => { const done = () => ok(); this.video.addEventListener("playing", done, { once: true }); setTimeout(done, 15000); });
-      this.overlay.classList.add("hidden");
+      this.loader.hide();
     } catch (e) {
-      if (e.message !== "cancelled") { console.error("[astra]", e); this.notify(e.message || "Couldn't start that game."); }
-      await this.leave();
+      if (e.message !== "cancelled") { console.error("[astra]", e); this.notify(e.message || "Couldn't start that game."); await this.leave(); }
     } finally {
       this.busy = false;
     }
   }
 
   async leave() {
-    this.abort?.abort();
+    this.token++;
     this.player?.dispose(); this.player = null;
+    try { this.relay?.close(); } catch {} this.relay = null;
     const id = this.sessionId; this.sessionId = null;
+    this.loader.hide();
     this.show("screen-select");
     if (id) await this.client.stop(id);
   }
