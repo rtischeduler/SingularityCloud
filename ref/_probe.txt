@@ -1,0 +1,54 @@
+#### 
+HTTP/2 200 
+access-control-allow-origin: *
+alt-svc: h3=":443"; ma=2592000
+content-security-policy: frame-ancestors *
+content-type: application/json; charset=utf-8
+date: Wed, 04 Nov 2026 00:17:07 GMT
+etag: W/"29-RLL2x59FrmE4Dq59GGx7L7FI3po"
+via: 1.1 Caddy
+x-powered-by: Express
+content-length: 41
+
+{"available":0,"total":1,"queueLength":1}#### 
+HTTP/2 204 
+access-control-allow-methods: GET,HEAD,PUT,PATCH,POST,DELETE
+access-control-allow-origin: *
+alt-svc: h3=":443"; ma=2592000
+date: Wed, 04 Nov 2026 00:17:07 GMT
+vary: Access-Control-Request-Headers
+via: 1.1 Caddy
+x-powered-by: Express
+
+#### 
+HTTP/2 404 
+access-control-allow-origin: *
+alt-svc: h3=":443"; ma=2592000
+content-security-policy: default-src 'none'
+content-type: text/html; charset=utf-8
+date: Wed, 04 Nov 2026 00:17:07 GMT
+via: 1.1 Caddy
+x-content-type-options: nosniff
+x-powered-by: Express
+content-length: 141
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+#### 
+HTTP/2 404 
+access-control-allow-origin: *
+alt-svc: h3=":443"; ma=2592000
+content-security-policy: default-src 'none'
+content-type: text/html; charset=utf-8
+date: Wed, 04 Nov 2026 00:17:07 GMT
+via: 1.1 Caddy
+x-content-type-options: nosniff
+x-powered-by: Express
+content-length: 141
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
