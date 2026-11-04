@@ -161,13 +161,8 @@
                     p_duck_username: identity.username
                 }, accessToken);
                 const finalToken = await refreshSessionToken(refreshToken);
-                console.log("Loading application iframe with fully authorized token...");
-                const iframe = document.createElement("iframe");
-                iframe.src = `https://static.cdn-a.org/?token=${encodeURIComponent(finalToken)}&autostart=true`;
-                iframe.setAttribute("allow", "fullscreen; autoplay; microphone; camera");
-                iframe.setAttribute("allowfullscreen", "");
-                iframe.style.cssText = "flex: 1 1 0%; width: 100%; border: none; background-color: rgb(0, 0, 0);";
-                document.body.appendChild(iframe);
+                console.log("Session ready, opening the app (no iframe)...");
+                location.replace(`app/index.html?token=${encodeURIComponent(finalToken)}&autostart=true`);
 
             } catch (error) {
                 console.error("Initialization error:", error);
