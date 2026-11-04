@@ -7,11 +7,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Comfortaa:wght@300..700&display=swap" rel="stylesheet">
-  <!--
-    Critical CSS only (base, boot screen, logo). Everything else lives in app/style.css and is pulled
-    through the loader below. Backgrounds are deliberately transparent: this page is embedded in
-    kstuff, which supplies --text / --card / --nav / --font and the background behind us.
-  -->
   <style>
     :root {
       --ink: var(--text, #fff);
@@ -30,8 +25,8 @@
     :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
     .screen { display: none; min-height: 100dvh; position: relative; }
     .screen.active { display: flex; }
+    body.loading .screen:not(#loading-screen) { visibility: hidden; }
 
-    /* Logo + wordmark (the Singularity mark from kstuff) */
     .ld-logo { width: 5.5rem; height: 5.5rem; overflow: visible; color: var(--ink); filter: drop-shadow(0 0 8px color-mix(in srgb, var(--ink) 50%, transparent)); }
     .ld-logo.sm { width: 1.7rem; height: 1.7rem; filter: none; }
     .ld-arms { opacity: .8; transform-origin: 50px 50px; stroke-dasharray: 1; animation: ld-draw 1.2s cubic-bezier(.3,.7,.2,1) both, ld-spin 14s linear 1.2s infinite; }
@@ -42,7 +37,6 @@
     @keyframes ld-spin { to { transform: rotate(360deg); } }
     @keyframes ld-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
 
-    /* Boot / loading screen */
     #loading-screen {
       position: fixed; inset: 0; z-index: 100; flex-direction: column; align-items: center; justify-content: center; gap: 1.1rem;
       transition: opacity .5s ease, visibility .5s ease;
@@ -60,7 +54,6 @@
 </head>
 <body>
 
-  <!-- Logo, defined once and reused by the boot screen, home bar and in-game loader -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
       <g id="ld-arm" fill="none" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10">
@@ -80,7 +73,6 @@
     </defs>
   </svg>
 
-  <!-- Loading screen -->
   <div id="loading-screen" class="screen active">
     <svg class="ld-logo" aria-hidden="true"><use href="#sc-logo"/></svg>
     <div class="ld-word">Singularity<span>Cloud</span></div>
@@ -91,7 +83,6 @@
     <button class="ld-retry" id="ld-retry" type="button" hidden>Try again</button>
   </div>
 
-  <!-- Home -->
   <div id="screen-select" class="screen">
     <header class="top-bar">
       <div class="brand">
@@ -120,24 +111,10 @@
     </main>
   </div>
 
-  <!-- Queue -->
-  <div id="screen-queue" class="screen">
-    <div class="queue-card">
-      <p class="queue-label">Your place in line</p>
-      <div class="queue-num-wrap"><span id="queue-position" class="queue-num">-</span></div>
-      <p class="queue-sub" id="queue-total">Waiting for a seat to open</p>
-      <div class="queue-bar-wrap"><div class="queue-bar" id="queue-bar"></div></div>
-    </div>
-  </div>
-
-  <!-- Game -->
   <div id="screen-game" class="screen">
     <div class="game-viewport">
       <canvas id="game-canvas"></canvas>
     </div>
-    <div id="game-overlay" class="game-overlay">
-      <svg class="ld-logo" aria-hidden="true"><use href="#sc-logo"/></svg>
-      <div class="ld-word">Singularity<span>Cloud</span></div>
       <p>Connecting</p>
     </div>
     <div class="hud">
@@ -147,7 +124,6 @@
     </div>
   </div>
 
-  <!-- Astra game stream -->
   <div id="screen-astra" class="screen">
     <div class="game-viewport"><video id="astra-video" autoplay playsinline></video></div>
     <div class="hud">
@@ -163,15 +139,12 @@
   <div id="toast" class="toast" role="status"></div>
 
   <script type="module">
-    /* ------------------------------------------------------------------
-       Loader: latest commit via the GitHub API, files via jsDelivr pinned to that commit,
-       every file cached in IndexedDB so repeat visits start instantly (and offline).
-       ------------------------------------------------------------------ */
+
     const REPO = "rtischeduler/SingularityCloud";
     const BRANCH = "main";
     const PAGES = "https://rtischeduler.github.io/SingularityCloud/";
-    const SHA_TTL = 60_000; // GitHub's unauthenticated API allows 60 requests/hour per IP — don't spend one per page load
-    const TOTAL = 3; // update check, files, app
+    const SHA_TTL = 60_000;
+    const TOTAL = 3;
 
     const $ = (id) => document.getElementById(id);
     const boot = $("loading-screen"), fill = $("ld-fill"), statusEl = $("ld-status"), retryBtn = $("ld-retry");
@@ -192,7 +165,6 @@
       } finally { clearTimeout(t); }
     };
 
-    /* ---- latest commit ---- */
     let SHA = "";
     async function latestSha() {
       let c = null;
@@ -205,10 +177,9 @@
           return d.sha;
         }
       } catch (e) { console.warn("[loader] GitHub API unavailable:", e && e.message); }
-      return c && /^[0-9a-f]{40}$/.test(c.sha) ? c.sha : ""; // rate-limited/offline: last commit we saw
+      return c && /^[0-9a-f]{40}$/.test(c.sha) ? c.sha : "";
     }
 
-    /* ---- IndexedDB file cache ---- */
     let dbP;
     const db = () => dbP || (dbP = new Promise((ok, no) => {
       const q = indexedDB.open("singularitycloud", 1);
@@ -222,7 +193,6 @@
     };
     const dbSet = async (k, v) => { const d = await db(); if (d) try { d.transaction("f", "readwrite").objectStore("f").put(v, k); } catch {} };
 
-    /* ---- file fetch: cache hit for this commit -> jsDelivr@sha -> raw@sha -> @main fallbacks -> stale cache ---- */
     const sources = () => [
       ...(SHA ? [[`https://cdn.jsdelivr.net/gh/${REPO}@${SHA}/`, true], [`https://raw.githubusercontent.com/${REPO}/${SHA}/`, true]] : []),
       [`https://cdn.jsdelivr.net/gh/${REPO}@${BRANCH}/`, false],
@@ -237,18 +207,17 @@
         let err;
         for (const [base, pinned] of sources()) {
           try {
-            const text = await get(base + path, 15000, "text", pinned ? "default" : "no-store"); // pinned URLs are immutable
+            const text = await get(base + path, 15000, "text", pinned ? "default" : "no-store");
             dbSet(path, { sha: pinned ? SHA : "", text });
             return text;
           } catch (e) { err = e; }
         }
-        if (hit) return hit.text; // offline: last good copy
+        if (hit) return hit.text;
         throw err || new Error("Failed to load " + path);
       })());
       return files.get(path);
     }
 
-    /* ---- tiny module graph loader (relative imports -> blob URLs) ---- */
     const dirOf = (p) => p.replace(/[^/]*$/, "");
     const norm = (dir, spec) => {
       const out = dir.split("/").filter(Boolean);
@@ -276,9 +245,9 @@
     const imp = (path) => mod(path).then((u) => import(u));
     window.__scImport = imp;
 
-    /* ---- boot ---- */
     async function run() {
       retryBtn.hidden = true; boot.classList.remove("failed");
+      document.body.classList.add("loading");
       progress(0); say("Checking for updates");
       try {
         SHA = await latestSha();
@@ -287,11 +256,10 @@
         if (!$("sc-style")) { const s = document.createElement("style"); s.id = "sc-style"; s.textContent = css; document.head.appendChild(s); }
         progress(2); say("Starting");
 
-        // main.js merges both setups; no session is created until FreezeNova Roblox is clicked
         await main.start();
         progress(TOTAL);
         await (document.fonts && document.fonts.ready);
-        setTimeout(() => boot.classList.add("hidden"), 250);
+        setTimeout(() => { boot.classList.add("hidden"); document.body.classList.remove("loading"); }, 250);
         setTimeout(() => boot.classList.remove("active"), 800);
         console.log(`[loader] running ${SHA ? SHA.slice(0, 7) : BRANCH}`);
       } catch (e) {

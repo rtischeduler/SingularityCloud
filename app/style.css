@@ -1,9 +1,3 @@
-/* SingularityCloud — matches kstuff.
-   No backgrounds anywhere: the page is embedded in kstuff and shows its background through.
-   Colors come from the variables kstuff injects (--text, --card, --nav, --font); the base tokens
-   (--ink, --surface, --line, --dim, --faint) are defined in index.html. */
-
-/* =========== HOME =========== */
 #screen-select { flex-direction: column; }
 .top-bar {
   display: flex; align-items: center; justify-content: space-between;
@@ -39,7 +33,6 @@
 .play-tag { margin-top: 16px; font-size: .8rem; font-weight: 700; opacity: 0; transition: opacity .2s; }
 .game-card:hover .play-tag, .game-card:focus-visible .play-tag { opacity: 1; }
 
-/* Astra library (listed, not playable yet) */
 .astra-note { color: var(--dim); font-size: .85rem; margin-bottom: 14px; }
 .astra-note[hidden] { display: none; }
 .game-card.has-art, .game-card.locked { padding: 0 0 14px; overflow: hidden; }
@@ -55,30 +48,10 @@
 .card-art.has-img { color: transparent; }
 .soon-tag { margin: 6px 16px 0; font-size: .72rem; font-weight: 700; color: var(--faint); letter-spacing: .04em; text-transform: uppercase; }
 
-/* =========== QUEUE =========== */
-#screen-queue { align-items: center; justify-content: center; }
-.queue-card { width: min(360px, 88vw); text-align: center; }
-.queue-label { color: var(--dim); font-size: .85rem; }
-.queue-num { font-size: clamp(5rem, 18vw, 8rem); font-weight: 900; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.queue-sub { color: var(--dim); font-size: .9rem; margin: 6px 0 26px; }
-.queue-bar-wrap { height: 3px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 14%, transparent); overflow: hidden; }
-.queue-bar { height: 100%; width: 30%; border-radius: 3px; background: var(--ink); animation: slide 2s ease-in-out infinite; }
-@keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
-
-/* =========== GAME =========== */
 #screen-game, #screen-astra { align-items: center; justify-content: center; overflow: hidden; height: 100dvh; }
 
-/* Fills the window; the stream is letterboxed (never stretched) to its own aspect ratio. */
 .game-viewport { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 #game-canvas, .game-viewport video { width: 100%; height: 100%; object-fit: contain; display: block; touch-action: none; }
-
-.game-overlay {
-  position: absolute; inset: 0; z-index: 10;
-  display: flex; flex-direction: column; gap: 1.1rem; align-items: center; justify-content: center;
-  font-size: .8rem; transition: opacity .45s;
-}
-.game-overlay p { opacity: .6; min-height: 1.2em; text-align: center; max-width: 80vw; }
-.game-overlay.hidden { opacity: 0; pointer-events: none; }
 
 .hud { position: absolute; top: max(14px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right)); z-index: 20; display: flex; gap: 8px; }
 .hud-btn {
@@ -91,7 +64,6 @@
 }
 .hud-btn:hover, .hud-btn:focus-visible { opacity: 1; transform: scale(1.06); }
 
-/* Toast (replaces blocking alert()) */
 .toast {
   position: fixed; left: 50%; bottom: 28px; z-index: 200; transform: translate(-50%, 20px);
   background: var(--nav, color-mix(in srgb, #000 70%, transparent)); color: var(--ink);
@@ -106,9 +78,7 @@
   .hero-sub { margin-bottom: 40px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .queue-bar { animation: none; width: 100%; }
   * { transition-duration: .01ms !important; }
 }
 
-/* =========== ASTRA STREAM =========== */
 #astra-video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; touch-action: none; }

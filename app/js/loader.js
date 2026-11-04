@@ -1,6 +1,6 @@
-/** The shared loading screen (#loading-screen in index.html): FreezeNova and Astra both drive it, with a step counter line. */
 export class Loader {
   constructor(doc = document) {
+    this.doc = doc;
     this.el = doc.getElementById("loading-screen");
     this.fill = doc.getElementById("ld-fill");
     this.status = doc.getElementById("ld-status");
@@ -12,16 +12,20 @@ export class Loader {
 
   show(text = "Loading", { cancel = null } = {}) {
     clearTimeout(this._t);
+    this.doc.body.classList.add("loading");
     this.el.classList.remove("hidden", "failed");
     this.el.classList.add("active");
     this.fill.style.transform = "scaleX(0)";
     this.status.textContent = text;
     if (this.count) this.count.textContent = "";
-    this.onCancel = cancel;
-    if (this.cancelBtn) this.cancelBtn.hidden = !cancel;
+    this.setCancel(cancel);
   }
 
-  /** i of total, 1-based; the line under the bar reads "3 / 7". */
+  setCancel(fn) {
+    this.onCancel = fn || null;
+    if (this.cancelBtn) this.cancelBtn.hidden = !fn;
+  }
+
   step(i, total, text) {
     this.fill.style.transform = `scaleX(${Math.min(i / total, 1)})`;
     if (text) this.status.textContent = text;
@@ -31,8 +35,8 @@ export class Loader {
   text(t) { this.status.textContent = t; }
 
   hide() {
-    this.onCancel = null;
-    if (this.cancelBtn) this.cancelBtn.hidden = true;
+    this.doc.body.classList.remove("loading");
+    this.setCancel(null);
     this.el.classList.add("hidden");
     this._t = setTimeout(() => this.el.classList.remove("active"), 600);
   }

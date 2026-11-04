@@ -6,35 +6,25 @@ import { H264Decoder } from "./decoder.js";
 import { InputCapture } from "./input.js";
 
 export class App {
-  /** @param {{ ensureSession?: (onStep?: (i: number, total: number, text: string) => void) => Promise<void>, loader?: import("./loader.js").Loader }} [opts] */
   constructor(opts = {}) {
-    /** Creates the FreezeNova session; only called when the player clicks Roblox. */
     this.ensureSession = opts.ensureSession || (async () => {});
-    /** Shared loading screen (app/js/loader.js). */
     this.loader = opts.loader || null;
-    /** @type {WebSocketClient|null} */
+    this.stepTotal = opts.stepTotal || 7;
     this.ws = null;
-    /** @type {MediasoupTransport|null} */
     this.transport = null;
-    /** @type {WebRTCClient|null} */
     this.webrtc = null;
-    /** @type {H264Decoder|null} */
     this.decoder = null;
-    /** @type {InputCapture|null} */
     this.input = null;
-    /** @type {HTMLVideoElement|null} */
     this.videoEl = null;
-    /** @type {"phone"|"pc"|null} */
     this._deviceType = null;
-    /** @type {"webrtc"|"mediasoup"|null} */
     this._transportMode = null;
     this._statusTimer = null;
+    this._loadingGame = false;
 
     this.init();
   }
 
   init() {
-    // Session is ready (boot screen finished) — show the game hub.
     this.showScreen("screen-select");
     this.refreshStatus();
 
@@ -42,12 +32,10 @@ export class App {
       if (this.currentScreen() === "screen-select") this.refreshStatus();
     }, 8000);
 
-    // Play button
     document.getElementById("play-roblox").addEventListener("click", () => {
       this.selectGame("roblox");
     });
 
-    // Clean up WebSocket when page/iframe unloads (prevents phone stuck in-use)
     window.addEventListener("beforeunload", () => {
       this.ws?.close();
     });
@@ -58,7 +46,6 @@ export class App {
     });
   }
 
-  /** The Unblock button is gone from the page; this detached stand-in keeps the restart code below inert. */
   _unblockBtn() {
     if (!this._fakeUnblock) {
       this._fakeUnblock = document.createElement("button");
@@ -69,7 +56,6 @@ export class App {
     return this._fakeUnblock;
   }
 
-  /** Non-blocking message instead of alert() (alert froze the stream and the page). */
   notify(text) {
     const el = document.getElementById("toast");
     if (!el) return console.warn(text);
@@ -93,8 +79,17 @@ export class App {
     }
   }
 
-  /* ---- Flow ---- */
-  /** Clicking FreezeNova Roblox: create the session now (not at page load) on the shared loading screen, then join the queue. */
+  overlayText(text) {
+    if (this._loadingGame) this.loader?.text(text);
+  }
+
+  overlayHide() {
+    if (!this._loadingGame) return;
+    this._loadingGame = false;
+    this.loader?.step(this.stepTotal, this.stepTotal, "Ready");
+    this.loader?.hide();
+  }
+
   async selectGame(gameId) {
     if (this._starting) return;
     this._starting = true;
@@ -110,7 +105,7 @@ export class App {
     } finally {
       this._starting = false;
     }
-    this.loader?.hide();
+    this._loadingGame = true;
     this._selectGame(gameId);
   }
 
@@ -118,7 +113,6 @@ export class App {
     this._t0 = performance.now();
     this._tlog = (msg) => console.log(`[App][${Math.round(performance.now() - this._t0)}ms] ${msg}`);
 
-    // Intercept ALL console.log calls to prepend elapsed time
     if (!this._origConsoleLog) {
       this._origConsoleLog = console.log.bind(console);
       console.log = (...args) => {
@@ -129,17 +123,17 @@ export class App {
 
     this._tlog("Play clicked");
 
-    this.showScreen("screen-queue");
+    this.showScreen(null);
+    this.loader?.setCancel(() => this.resetToSelect());
+    this.loader?.step(this.stepTotal - 2, this.stepTotal, "Waiting in queue");
 
-    // Start video watchdog (detects black screen / stale frames)
     this._startVideoWatchdog();
 
     this.ws = new WebSocketClient();
 
     this.ws.onQueueStatus = (position, total) => {
-      document.getElementById("queue-position").textContent = position;
-      document.getElementById("queue-total").textContent =
-        total > 1 ? `${total} people in queue` : "You're next!";
+      if (!this._loadingGame) return;
+      this.loader?.step(this.stepTotal - 2, this.stepTotal, total > 1 ? `Place in line: ${position} of ${total}` : "You're next!");
     };
 
     this.ws.onQueueReady = () => {
@@ -147,7 +141,6 @@ export class App {
       this.startGame();
     };
 
-    // ---- mediasoup signaling (used when server is in PC/Windows mode) ----
     this.ws.onRouterRtpCapabilities = async (caps) => {
       this._tlog("Router RTP capabilities received — using mediasoup transport");
       this._transportMode = "mediasoup";
@@ -164,7 +157,6 @@ export class App {
       await this.transport?.consume(params);
     };
 
-    // ---- WebRTC signaling (used when server is in phone mode) ----
     this.ws.onOffer = async (sdp) => {
       this._tlog("WebRTC offer received — using WebRTC transport");
       this._transportMode = "webrtc";
@@ -193,75 +185,55 @@ export class App {
 
     this.ws.onSessionProgress = (message) => {
       this._tlog(`[Server] ${message}`);
-      // Show progress on the loading overlay so user knows what's happening
-      const ov = document.getElementById("game-overlay");
-      if (ov) {
-        const p = ov.querySelector("p");
-        // Strip timestamp prefixes like "[4150ms] " or "[restart][1200ms] "
-        if (p) p.textContent = message.replace(/^(\[[\w]*\])*\s*(\[\d+ms\]\s*)?/, "");
-      }
+      this.overlayText(message.replace(/^(\[[\w]*\])*\s*(\[\d+ms\]\s*)?/, ""));
     };
 
     this.ws.onGameReady = (deviceType) => {
       this._deviceType = deviceType;
       this._tlog(`Game ready (device=${deviceType}, transport=${this._transportMode}) — waiting for video`);
 
-      // In direct WebRTC mode, video may already be flowing before game-ready arrives.
-      // Check if frames were already decoded and hide overlay immediately.
       if (this._lastFrameTime > 0) {
-        this._tlog("Video already playing — hiding overlay immediately");
-        const ov = document.getElementById("game-overlay");
-        if (ov) ov.classList.add("hidden");
+        this._tlog("Video already playing — hiding loading screen immediately");
+        this.overlayHide();
       } else {
         this._hideOverlayOnFirstFrame = true;
       }
 
-      // ---- Phone mode: overlay hidden on first decoded frame via decoder.onFirstFrame ----
-      // ---- PC mode: poll for <video> playback ----
       if (this._transportMode === "mediasoup") {
         const overlayCheck = setInterval(() => {
           if (!this._hideOverlayOnFirstFrame) { clearInterval(overlayCheck); return; }
           if (this.videoEl && !this.videoEl.paused && this.videoEl.currentTime > 0) {
             this._hideOverlayOnFirstFrame = false;
             clearInterval(overlayCheck);
-            this._tlog("Video playing — hiding overlay");
-            const ov = document.getElementById("game-overlay");
-            if (ov) ov.classList.add("hidden");
+            this._tlog("Video playing — hiding loading screen");
+            this.overlayHide();
           }
         }, 500);
 
-        // Fallback: hide after 30s
         setTimeout(() => {
           clearInterval(overlayCheck);
           if (this._hideOverlayOnFirstFrame) {
             this._hideOverlayOnFirstFrame = false;
-            this._tlog("No video after 30s — hiding overlay anyway");
-            const ov = document.getElementById("game-overlay");
-            if (ov) ov.classList.add("hidden");
+            this._tlog("No video after 30s — hiding loading screen anyway");
+            this.overlayHide();
           }
         }, 30000);
       } else {
-        // WebRTC/phone mode: decoder.onFirstFrame handles overlay hiding
-        // Fallback: hide after 30s
         setTimeout(() => {
           if (this._hideOverlayOnFirstFrame) {
             this._hideOverlayOnFirstFrame = false;
-            this._tlog("No video after 30s — hiding overlay anyway");
-            const ov = document.getElementById("game-overlay");
-            if (ov) ov.classList.add("hidden");
+            this._tlog("No video after 30s — hiding loading screen anyway");
+            this.overlayHide();
           }
         }, 30000);
       }
 
-      // Set up input capture now that we know the device type
       const inputTarget = this._transportMode === "mediasoup" ? this.videoEl : this.canvas;
       if (inputTarget && !this.input) {
         if (deviceType === "pc") {
-          // PC mode: direct mouse/keyboard, no joystick/calibration
           this.input = new InputCapture(inputTarget, null, { pcMode: true });
           this._tlog("Input: PC mode (direct mouse + keyboard)");
         } else {
-          // Phone mode: joystick, button calibration, Android keycodes
           const keymap = {
             joystick: { x: 0.13, y: 0.75, radius: 0.07 },
             buttons: { Space: { x: 0.898, y: 0.866, label: "Jump" } },
@@ -270,9 +242,6 @@ export class App {
           this._tlog("Input: Phone mode (joystick + touch)");
         }
 
-        // Route input based on transport mode:
-        // Phone (WebRTC): send via DataChannel for low latency
-        // PC (mediasoup): send via WebSocket (no DataChannel available)
         if (this._transportMode === "webrtc") {
           this.input.onInput = (msg) => this.webrtc?.sendInput(msg);
         } else {
@@ -284,7 +253,6 @@ export class App {
       this._showUnblockButton();
       this._isUnblocking = false;
 
-      // Request keyframe
       if (this._transportMode === "webrtc") {
         this.webrtc?.sendInput({ type: "reset-video" });
       } else {
@@ -312,23 +280,18 @@ export class App {
 
   startGame() {
     this.showScreen("screen-game");
+    this.loader?.step(this.stepTotal - 1, this.stepTotal, "Connecting");
     this._gameReadyAt = Date.now();
 
-    // Failsafe: hide overlay after 60s no matter what — prevents user being
-    // stuck on a loading screen if something goes wrong server-side
     this._overlayFailsafe = setTimeout(() => {
-      const ov = document.getElementById("game-overlay");
-      if (ov && !ov.classList.contains("hidden")) {
-        this._tlog("Overlay failsafe — hiding after 60s");
-        ov.classList.add("hidden");
+      if (this._loadingGame) {
+        this._tlog("Loading failsafe — hiding after 60s");
+        this.overlayHide();
       }
     }, 60000);
 
-    const viewport = document.querySelector(".game-viewport");
+    const viewport = document.querySelector("#screen-game .game-viewport");
 
-    // ---- Set up BOTH transports; only one will be used based on server signals ----
-
-    // 1) mediasoup transport (for PC/Windows mode)
     this.videoEl = document.createElement("video");
     this.videoEl.id = "game-video";
     this.videoEl.autoplay = true;
@@ -339,9 +302,8 @@ export class App {
     this.videoEl.style.height = "100%";
     this.videoEl.style.objectFit = "contain";
     this.videoEl.style.background = "#000";
-    this.videoEl.style.display = "none"; // hidden until mediasoup activates
+    this.videoEl.style.display = "none";
 
-    // Remove old video element if present
     const oldVideo = document.getElementById("game-video");
     if (oldVideo) oldVideo.remove();
     viewport.appendChild(this.videoEl);
@@ -357,7 +319,6 @@ export class App {
 
     this.transport.onVideoTrack = (track) => {
       this._tlog("mediasoup video track received");
-      // Show video element, hide canvas
       this.videoEl.style.display = "";
       this.canvas = document.getElementById("game-canvas");
       if (this.canvas) this.canvas.style.display = "none";
@@ -365,24 +326,19 @@ export class App {
       const stream = new MediaStream([track]);
       this.videoEl.srcObject = stream;
 
-      // Monitor video playback for first frame
       this.videoEl.onloadeddata = () => {
         this._tlog("First video frame rendered (mediasoup)");
         this._lastFrameTime = Date.now();
         if (this._hideOverlayOnFirstFrame) {
           this._hideOverlayOnFirstFrame = false;
-          const ov = document.getElementById("game-overlay");
-          if (ov) ov.classList.add("hidden");
+          this.overlayHide();
         }
       };
 
-      // Track frames for watchdog
       this.videoEl.ontimeupdate = () => {
         this._lastFrameTime = Date.now();
       };
 
-      // Keep latency low by shrinking the receiver's jitter buffer instead of seeking the
-      // <video> (seeking a live MediaStream drops reference frames and shows as smearing).
       const rx = this.transport?.consumer?.rtpReceiver;
       try {
         if (rx && "jitterBufferTarget" in rx) rx.jitterBufferTarget = 40;
@@ -390,9 +346,8 @@ export class App {
       } catch {}
     };
 
-    // 2) WebRTC transport (for phone mode)
     this.canvas = document.getElementById("game-canvas");
-    if (this.canvas) this.canvas.style.display = ""; // show canvas by default
+    if (this.canvas) this.canvas.style.display = "";
 
     this.webrtc = new WebRTCClient();
     this.webrtc.init();
@@ -425,14 +380,12 @@ export class App {
       this._lastFrameTime = Date.now();
       if (this._hideOverlayOnFirstFrame) {
         this._hideOverlayOnFirstFrame = false;
-        const ov = document.getElementById("game-overlay");
-        if (ov) ov.classList.add("hidden");
+        this.overlayHide();
       }
     };
 
     this.decoder.onVideoSizeChange = (width, height) => {
       this._tlog(`Video size: ${width}x${height}`);
-      // Notify server of video dimensions (needed for input coordinate mapping)
       if (this._transportMode === "webrtc") {
         this.webrtc?.sendInput({ type: "video-size", width, height });
       } else {
@@ -445,13 +398,14 @@ export class App {
       this._lastFrameTime = Date.now();
     };
 
-    // Input capture is created after game-ready (we need deviceType to pick phone vs PC mode)
     this.input = null;
 
     this.ws.sendClientReady();
   }
 
   leaveQueue() {
+    this._loadingGame = false;
+    this.loader?.hide();
     this.ws?.close();
     this.ws = null;
     this.showScreen("screen-select");
@@ -466,46 +420,33 @@ export class App {
     this._tlog("Unblock clicked — requesting game restart");
     this._isUnblocking = true;
 
-    // Show overlay while game restarts
-    const overlay = document.getElementById("game-overlay");
-    if (overlay) {
-      overlay.classList.remove("hidden");
-      overlay.querySelector("p").textContent = "Restarting game...";
-    }
+    this._loadingGame = true;
+    this.loader?.show("Restarting game...");
 
-    // Hide unblock button during restart
     const btn = this._unblockBtn();
     if (btn) btn.classList.remove("visible");
 
-    // Soft-reset decoder for phone mode so it re-accepts fresh SPS/PPS + keyframe
     if (this._transportMode === "webrtc" && this.decoder) {
       this.decoder.softReset();
     }
 
-    // Request fresh keyframe from server
     if (this._transportMode === "webrtc") {
       this.webrtc?.sendInput({ type: "reset-video" });
     } else {
       this.ws?.sendInput({ type: "reset-video" });
     }
 
-    // Tell server to restart the game
     this.ws.sendUnblock();
 
-    // Overlay stays visible until server sends game-ready (handled by onGameReady).
-    // Progress messages from BYOD app update the overlay text via onSessionProgress.
-    // Fallback: hide after 60s if game-ready never arrives.
     setTimeout(() => {
       if (this._isUnblocking) {
         this._isUnblocking = false;
-        this._tlog("Unblock timeout — hiding overlay after 60s");
-        const ov = document.getElementById("game-overlay");
-        if (ov) ov.classList.add("hidden");
+        this._tlog("Unblock timeout — hiding loading screen after 60s");
+        this.overlayHide();
         this._showUnblockButton();
       }
     }, 60000);
 
-    // 150-second cooldown to prevent spam
     this._unblockCooldown = true;
     this._unblockCooldownEnd = Date.now() + 150000;
     this._unblockCooldownTimer = setTimeout(() => {
@@ -519,7 +460,6 @@ export class App {
     const btn = this._unblockBtn();
     if (!btn) return;
 
-    // Clear any existing countdown interval
     if (this._unblockCountdownInterval) {
       clearInterval(this._unblockCountdownInterval);
       this._unblockCountdownInterval = null;
@@ -528,7 +468,6 @@ export class App {
     const textEl = btn.querySelector(".btn-unblock-text");
 
     if (this._unblockCooldown && this._unblockCooldownEnd) {
-      // Show button in disabled state with countdown
       btn.classList.add("visible");
       btn.disabled = true;
 
@@ -545,7 +484,6 @@ export class App {
       updateCountdown();
       this._unblockCountdownInterval = setInterval(updateCountdown, 1000);
     } else {
-      // Normal enabled state
       btn.classList.add("visible");
       btn.disabled = false;
       if (textEl) textEl.textContent = "Unblock";
@@ -568,10 +506,10 @@ export class App {
     this._stopVideoWatchdog();
     this._gameReadyAt = null;
     this._isUnblocking = false;
+    this._hideOverlayOnFirstFrame = false;
     this._transportMode = null;
     this._deviceType = null;
 
-    // Clean up mediasoup
     this.transport?.close();
     this.transport = null;
     if (this._liveEdgeInterval) {
@@ -584,7 +522,6 @@ export class App {
       this.videoEl = null;
     }
 
-    // Clean up WebRTC + decoder
     this.webrtc?.close();
     this.webrtc = null;
     if (this.decoder) {
@@ -592,7 +529,6 @@ export class App {
       this.decoder = null;
     }
 
-    // Show canvas again (hidden during mediasoup mode)
     const canvas = document.getElementById("game-canvas");
     if (canvas) canvas.style.display = "";
 
@@ -601,20 +537,14 @@ export class App {
     this.input?.destroy();
     this.input = null;
 
-    // Clear overlay failsafe
     if (this._overlayFailsafe) {
       clearTimeout(this._overlayFailsafe);
       this._overlayFailsafe = null;
     }
 
-    // Reset overlay text and show it
-    const overlay = document.getElementById("game-overlay");
-    if (overlay) {
-      overlay.classList.remove("hidden");
-      overlay.querySelector("p").textContent = "Connecting...";
-    }
+    this._loadingGame = false;
+    this.loader?.hide();
 
-    // Hide unblock button and clear cooldown
     this._hideUnblockButton();
     if (this._unblockCooldownTimer) {
       clearTimeout(this._unblockCooldownTimer);
@@ -626,14 +556,6 @@ export class App {
     this.refreshStatus();
   }
 
-  /* ---- Video watchdog ---- */
-
-  /**
-   * Watchdog that monitors decoded frame output.
-   * If we're on the game screen and no frame renders for 3+ seconds,
-   * it requests a fresh keyframe.
-   * This catches intermittent black-screen issues that are hard to reproduce.
-   */
   _startVideoWatchdog() {
     this._stopVideoWatchdog();
     this._videoWatchdogResetCount = 0;
@@ -642,13 +564,11 @@ export class App {
     this._videoWatchdog = setInterval(() => {
       if (this.currentScreen() !== "screen-game") return;
 
-      // Need at least one transport active
       const hasTransport = this._transportMode === "webrtc"
         ? !!this.webrtc
         : !!this.transport;
       if (!hasTransport && !this.webrtc && !this.transport) return;
 
-      // For phone mode, also check decoder.lastFrameTime (more accurate)
       const lastFrame = this._transportMode === "webrtc" && this.decoder
         ? this.decoder.lastFrameTime || this._lastFrameTime
         : this._lastFrameTime;
@@ -671,7 +591,6 @@ export class App {
 
       const staleMs = Date.now() - lastFrame;
       if (staleMs >= 5000) {
-        // Rate-limit: only send one reset per 15s to avoid disrupting the encoder
         const now = Date.now();
         const sinceLastReset = now - (this._lastResetTime || 0);
         if (sinceLastReset >= 15000) {
@@ -695,15 +614,13 @@ export class App {
     }
   }
 
-  /* ---- Helpers ---- */
   showScreen(id) {
-    document.querySelectorAll(".screen:not(#screen-boot)").forEach((s) => s.classList.remove("active"));
-    document.getElementById(id).classList.add("active");
+    document.querySelectorAll(".screen:not(#loading-screen)").forEach((s) => s.classList.remove("active"));
+    if (id) document.getElementById(id)?.classList.add("active");
   }
 
   currentScreen() {
-    const el = document.querySelector(".screen.active:not(#screen-boot)");
+    const el = document.querySelector(".screen.active:not(#loading-screen)");
     return el ? el.id : null;
   }
 }
-
