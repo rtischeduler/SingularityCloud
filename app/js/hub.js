@@ -1,6 +1,5 @@
 /**
- * Game hub: FreezeNova Roblox (ours, always first) + the Astra library (listed, greyed out as unfinished).
- * Selection only for now: Astra entries are not clickable and no Astra session is ever started.
+ * Game hub: FreezeNova Roblox (ours, always first) + the Astra library. Clicking an Astra card calls `hub.onSelect(game)`.
  * Everything that touches the network goes through the injected `fetchAstra` (the Singuloxy/libcurl proxy),
  * so the list and the icons are proxied and this file has no browser-only imports.
  */
@@ -35,6 +34,8 @@ export class Hub {
     this.queue = [];
     this.active = 0;
     this.games = [];
+    /** @type {((game: {id: string, name: string}) => void) | null} */
+    this.onSelect = null;
   }
 
   $(id) { return this.doc.getElementById(id); }
@@ -94,22 +95,23 @@ export class Hub {
     this.setNote("");
     const d = this.doc, frag = d.createDocumentFragment();
     for (const g of games) {
-      const card = d.createElement("div");
-      card.className = "game-card locked";
-      card.setAttribute("aria-disabled", "true");
+      const card = d.createElement("button");
+      card.type = "button";
+      card.className = "game-card has-art astra";
+      card.addEventListener("click", () => this.onSelect?.(g));
       const art = d.createElement("div");
       art.className = "card-art";
       art.setAttribute("aria-hidden", "true");
       art.textContent = g.name.charAt(0).toUpperCase();
       if (g.icon) art.dataset.icon = g.icon;
       const h = d.createElement("h3"); h.textContent = g.name;
-      const tag = d.createElement("div"); tag.className = "soon-tag"; tag.textContent = "Unfinished";
+      const tag = d.createElement("div"); tag.className = "play-tag"; tag.textContent = "Play now";
       card.append(art, h, tag);
       frag.append(card);
     }
-    this.grid.querySelectorAll(".game-card.locked").forEach((c) => c.remove());
+    this.grid.querySelectorAll(".game-card.astra").forEach((c) => c.remove());
     this.grid.append(frag);
-    for (const art of this.grid.querySelectorAll(".locked .card-art[data-icon]")) this.io ? this.io.observe(art) : this.loadIcon(art);
+    for (const art of this.grid.querySelectorAll(".astra .card-art[data-icon]")) this.io ? this.io.observe(art) : this.loadIcon(art);
   }
 
   /** Icons come through the proxy too (blob URLs), a few at a time, only when scrolled near. */
