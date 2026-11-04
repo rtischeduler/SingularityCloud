@@ -90,9 +90,6 @@
   font-size: .78rem; font-weight: 700; opacity: .4; transition: opacity .2s ease, transform .2s ease;
 }
 .hud-btn:hover, .hud-btn:focus-visible { opacity: 1; transform: scale(1.06); }
-.btn-unblock { display: none; }
-.btn-unblock.visible { display: inline-flex; }
-.btn-unblock:disabled { cursor: not-allowed; opacity: .3; transform: none; }
 
 /* Toast (replaces blocking alert()) */
 .toast {

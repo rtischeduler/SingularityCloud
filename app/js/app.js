@@ -6,7 +6,10 @@ import { H264Decoder } from "./decoder.js";
 import { InputCapture } from "./input.js";
 
 export class App {
-  constructor() {
+  /** @param {{ ensureSession?: (onStep?: (i: number) => void) => Promise<void> }} [opts] */
+  constructor(opts = {}) {
+    /** Creates the FreezeNova session; only called when the player clicks Roblox. */
+    this.ensureSession = opts.ensureSession || (async () => {});
     /** @type {WebSocketClient|null} */
     this.ws = null;
     /** @type {MediasoupTransport|null} */
@@ -42,10 +45,6 @@ export class App {
       this.selectGame("roblox");
     });
 
-    document.getElementById("btn-unblock").addEventListener("click", () => {
-      this.unblock();
-    });
-
     // Clean up WebSocket when page/iframe unloads (prevents phone stuck in-use)
     window.addEventListener("beforeunload", () => {
       this.ws?.close();
@@ -55,6 +54,17 @@ export class App {
       if (document.fullscreenElement) document.exitFullscreen();
       else document.documentElement.requestFullscreen?.().catch(() => {});
     });
+  }
+
+  /** The Unblock button is gone from the page; this detached stand-in keeps the restart code below inert. */
+  _unblockBtn() {
+    if (!this._fakeUnblock) {
+      this._fakeUnblock = document.createElement("button");
+      const t = document.createElement("span");
+      t.className = "btn-unblock-text";
+      this._fakeUnblock.append(t);
+    }
+    return this._fakeUnblock;
   }
 
   /** Non-blocking message instead of alert() (alert froze the stream and the page). */
@@ -82,7 +92,30 @@ export class App {
   }
 
   /* ---- Flow ---- */
-  selectGame(gameId) {
+  /** Clicking FreezeNova Roblox: create the session now (not at page load), then join the queue. */
+  async selectGame(gameId) {
+    if (this._starting) return;
+    this._starting = true;
+    const label = document.querySelector(".queue-label"), sub = document.getElementById("queue-total");
+    const pos = document.getElementById("queue-position");
+    const [l0, s0, p0] = [label.textContent, sub.textContent, pos.textContent];
+    label.textContent = "Starting a session"; pos.textContent = "…"; sub.textContent = "Checking your connection";
+    this.showScreen("screen-queue");
+    try {
+      await this.ensureSession((text) => { sub.textContent = text; });
+    } catch (e) {
+      console.error("Session failed:", e);
+      this.notify("Couldn't start a session. Check your connection and try again.");
+      this.showScreen("screen-select");
+      return;
+    } finally {
+      this._starting = false;
+      label.textContent = l0; sub.textContent = s0; pos.textContent = p0;
+    }
+    this._selectGame(gameId);
+  }
+
+  _selectGame(gameId) {
     this._t0 = performance.now();
     this._tlog = (msg) => console.log(`[App][${Math.round(performance.now() - this._t0)}ms] ${msg}`);
 
@@ -442,7 +475,7 @@ export class App {
     }
 
     // Hide unblock button during restart
-    const btn = document.getElementById("btn-unblock");
+    const btn = this._unblockBtn();
     if (btn) btn.classList.remove("visible");
 
     // Soft-reset decoder for phone mode so it re-accepts fresh SPS/PPS + keyframe
@@ -484,7 +517,7 @@ export class App {
   }
 
   _showUnblockButton() {
-    const btn = document.getElementById("btn-unblock");
+    const btn = this._unblockBtn();
     if (!btn) return;
 
     // Clear any existing countdown interval
@@ -521,7 +554,7 @@ export class App {
   }
 
   _hideUnblockButton() {
-    const btn = document.getElementById("btn-unblock");
+    const btn = this._unblockBtn();
     if (btn) {
       btn.classList.remove("visible");
       btn.disabled = false;

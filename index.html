@@ -141,10 +141,6 @@
       <button id="btn-fullscreen" class="hud-btn" type="button" title="Toggle fullscreen" aria-label="Toggle fullscreen">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
       </button>
-      <button id="btn-unblock" class="btn-unblock hud-btn" type="button" title="Restart game and stream">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-        <span class="btn-unblock-text">Unblock</span>
-      </button>
     </div>
   </div>
 
@@ -159,8 +155,7 @@
     const BRANCH = "main";
     const PAGES = "https://rtischeduler.github.io/SingularityCloud/";
     const SHA_TTL = 60_000; // GitHub's unauthenticated API allows 60 requests/hour per IP — don't spend one per page load
-    const SESSION_LABELS = ["Checking your connection", "Starting a session", "Linking your profile", "Securing the stream", "Ready"];
-    const TOTAL = 2 + SESSION_LABELS.length;
+    const TOTAL = 3; // update check, files, app
 
     const $ = (id) => document.getElementById(id);
     const boot = $("loading-screen"), fill = $("ld-fill"), statusEl = $("ld-status"), retryBtn = $("ld-retry");
@@ -274,10 +269,10 @@
         progress(1); say("Loading latest build");
         const [css, main] = await Promise.all([file("app/style.css"), imp("main.js")]);
         if (!$("sc-style")) { const s = document.createElement("style"); s.id = "sc-style"; s.textContent = css; document.head.appendChild(s); }
-        progress(2);
+        progress(2); say("Starting");
 
-        // main.js merges both setups: FreezeNova Roblox session/app + the Astra hub list
-        await main.start((i) => { say(SESSION_LABELS[i]); progress(2 + i); }, () => say("Starting"));
+        // main.js merges both setups; no session is created until FreezeNova Roblox is clicked
+        await main.start();
         progress(TOTAL);
         await (document.fonts && document.fonts.ready);
         setTimeout(() => boot.classList.add("hidden"), 250);
