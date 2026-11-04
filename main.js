@@ -25,5 +25,5 @@ export async function start() {
   hub.onSelect = (game) => astra.play(game);
   installBridge({ app, astra, hub });
   hub.loadAstra();
-  return { app, hub, astra };
+  return { app, hub, astra, loader };
 }

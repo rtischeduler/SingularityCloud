@@ -75,12 +75,10 @@ export class App {
       const res = await backendFetch("/status");
       const s = await res.json();
 
-      document.getElementById("pill-text").textContent =
-        `${s.available}/${s.total} slots free`;
       document.getElementById("phones-free").textContent = s.available;
       document.getElementById("phones-total").textContent = s.total;
     } catch {
-      document.getElementById("pill-text").textContent = "Offline";
+      // status is only informational
     }
   }
 

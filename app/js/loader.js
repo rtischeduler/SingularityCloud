@@ -7,11 +7,13 @@ export class Loader {
     this.count = doc.getElementById("ld-count");
     this.cancelBtn = doc.getElementById("ld-cancel");
     this.onCancel = null;
+    this.gameActive = false; // true from show() until hide(): a game launch owns the loading screen
     this.cancelBtn?.addEventListener("click", () => this.onCancel?.());
   }
 
   show(text = "Loading", { cancel = null } = {}) {
     clearTimeout(this._t);
+    this.gameActive = true;
     this.doc.body.classList.add("loading");
     this.el.classList.remove("hidden", "failed");
     this.el.classList.add("active");
@@ -35,6 +37,7 @@ export class Loader {
   text(t) { this.status.textContent = t; }
 
   hide() {
+    this.gameActive = false;
     this.doc.body.classList.remove("loading");
     this.setCancel(null);
     this.el.classList.add("hidden");

@@ -89,10 +89,6 @@
         <svg class="ld-logo sm" aria-hidden="true"><use href="#sc-logo"/></svg>
         <span class="ld-word">Singularity<span>Cloud</span></span>
       </div>
-      <div id="server-status" class="server-pill">
-        <span class="status-dot"></span>
-        <span id="pill-text">Checking servers</span>
-      </div>
     </header>
     <main class="select-main">
       <div class="section-header">
@@ -254,11 +250,14 @@
         if (!$("sc-style")) { const s = document.createElement("style"); s.id = "sc-style"; s.textContent = css; document.head.appendChild(s); }
         progress(2); say("Starting");
 
-        await main.start();
-        progress(TOTAL);
+        const ctx = await main.start();
+        // A host page can deep-link a game the moment the bridge announces itself. From then on the loading screen
+        // belongs to that game (its progress + status), so the boot sequence must neither hide nor overwrite it.
+        const gameOwns = () => !!(ctx && ctx.loader && ctx.loader.gameActive);
+        if (!gameOwns()) progress(TOTAL);
         await (document.fonts && document.fonts.ready);
-        setTimeout(() => { boot.classList.add("hidden"); document.body.classList.remove("loading"); }, 250);
-        setTimeout(() => boot.classList.remove("active"), 800);
+        setTimeout(() => { if (gameOwns()) return; boot.classList.add("hidden"); document.body.classList.remove("loading"); }, 250);
+        setTimeout(() => { if (gameOwns()) return; boot.classList.remove("active"); }, 800);
         console.log(`[loader] running ${SHA ? SHA.slice(0, 7) : BRANCH}`);
         done = true; clearTimeout(watchdog);
       } catch (e) {

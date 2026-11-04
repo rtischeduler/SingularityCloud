@@ -460,6 +460,10 @@ export class AstraSessions {
   }
 
   async play(game, { deeplink = false } = {}) {
+    if (this.busy && deeplink) {
+      // Replacing a running launch: leave() already cancelled it, give it a moment to unwind.
+      for (let i = 0; i < 100 && this.busy; i++) await new Promise((r) => setTimeout(r, 50));
+    }
     if (this.busy) return;
     this.busy = true;
     const token = ++this.token;
