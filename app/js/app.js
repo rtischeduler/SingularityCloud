@@ -29,8 +29,9 @@ export class App {
   }
 
   init() {
-    // Session is ready (boot screen finished) — go straight to the queue.
-    this.showScreen("screen-queue");
+    // Session is ready (boot screen finished) — show the game hub.
+    this.showScreen("screen-select");
+    this.refreshStatus();
 
     this._statusTimer = setInterval(() => {
       if (this.currentScreen() === "screen-select") this.refreshStatus();
@@ -54,9 +55,6 @@ export class App {
       if (document.fullscreenElement) document.exitFullscreen();
       else document.documentElement.requestFullscreen?.().catch(() => {});
     });
-
-    // Auto-start: begin game flow immediately
-    this.selectGame("roblox");
   }
 
   /** Non-blocking message instead of alert() (alert froze the stream and the page). */

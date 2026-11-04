@@ -101,10 +101,11 @@
       </div>
     </header>
     <main class="select-main">
-      <h1>Play Roblox in your browser.</h1>
+      <h1>Pick a game.</h1>
       <p class="hero-sub">Runs on our hardware. Nothing to install.</p>
+
       <div class="section-header">
-        <h2>Library</h2>
+        <h2>FreezeNova</h2>
         <div class="slot-badge"><span id="phones-free">-</span> of <span id="phones-total">-</span> seats open</div>
       </div>
       <div id="game-grid" class="game-grid">
@@ -117,6 +118,13 @@
           <div class="play-tag">Play now</div>
         </button>
       </div>
+
+      <div class="section-header astra-header">
+        <h2>Library</h2>
+        <div class="slot-badge"><span id="astra-count">-</span> games</div>
+      </div>
+      <p id="astra-note" class="astra-note" role="status"></p>
+      <div id="astra-grid" class="game-grid"></div>
     </main>
   </div>
 
@@ -275,15 +283,12 @@
       try {
         SHA = await latestSha();
         progress(1); say("Loading latest build");
-        const [css, session, net] = await Promise.all([file("app/style.css"), imp("app/js/session.js"), imp("app/js/net.js")]);
-        const appP = imp("app/js/app.js"); // downloads while the session is created
+        const [css, main] = await Promise.all([file("app/style.css"), imp("main.js")]);
         if (!$("sc-style")) { const s = document.createElement("style"); s.id = "sc-style"; s.textContent = css; document.head.appendChild(s); }
         progress(2);
 
-        net.auth.token = await session.startSession((i) => { say(SESSION_LABELS[i]); progress(2 + i); });
-
-        say("Starting"); const { App } = await appP;
-        new App();
+        // main.js merges both setups: FreezeNova Roblox session/app + the Astra hub list
+        await main.start((i) => { say(SESSION_LABELS[i]); progress(2 + i); }, () => say("Starting"));
         progress(TOTAL);
         await (document.fonts && document.fonts.ready);
         setTimeout(() => boot.classList.add("hidden"), 250);

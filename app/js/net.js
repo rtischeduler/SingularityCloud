@@ -35,3 +35,9 @@ export async function proxiedWebSocket() {
   return (await proxy()).libcurl.WebSocket;
 }
 export const mayUseProxy = () => FORCE !== "direct";
+
+/** Fetch any URL through the proxy (used for the Astra catalog and icons; never tries a direct request). */
+export async function astraFetch(url, init) {
+  mode = "proxy";
+  return (await proxy()).libcurl.fetch(url, init);
+}
