@@ -41,10 +41,6 @@ export class App {
       this.selectGame("roblox");
     });
 
-    document.getElementById("btn-leave-queue").addEventListener("click", () => {
-      this.leaveQueue();
-    });
-
     document.getElementById("btn-unblock").addEventListener("click", () => {
       this.unblock();
     });
