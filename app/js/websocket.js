@@ -1,4 +1,4 @@
-import { wsBase, currentMode, proxiedWebSocket, mayUseProxy } from "./net.js";
+import { wsBase, currentMode, proxiedWebSocket, mayUseProxy, auth } from "./net.js";
 
 /**
  * WebSocket client for signaling with the server.
@@ -42,7 +42,7 @@ export class WebSocketClient {
   async connect() {
     // Pass auth token from URL query string
     const params = new URLSearchParams(location.search);
-    const token = params.get("token");
+    const token = auth.token || params.get("token");
     const url = `${wsBase()}/ws${token ? `?token=${encodeURIComponent(token)}` : ""}`;
     console.log("[WS] Connecting to", url.replace(/token=[^&]+/, "token=***"));
 

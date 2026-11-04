@@ -26,7 +26,11 @@ export class H264Decoder {
    */
   constructor(canvas, resetVideoFn) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext("2d");
+    this.ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+    this._pendingFrame = null; // newest decoded frame, drawn on the next animation frame
+    this._raf = 0;
+    this._lastPts = -1;
+    this.MAX_DECODE_QUEUE = 3;
     this.decoder = null;
     this.buffer = new Uint8Array(0);
 
@@ -72,16 +76,35 @@ export class H264Decoder {
   }
 
   /**
+   * Drop deltas until the next keyframe and ask the server for one. Unlike requestVideoReset()
+   * this keeps the decoder alive, so recovery is quick and the last good picture stays up
+   * instead of smearing.
+   */
+  requestKeyframeOnly(reason) {
+    this._waitingForKeyframe = true;
+    const now = Date.now();
+    if (this.resetVideoFn && now - this.lastResetTime >= this.RESET_COOLDOWN_MS) {
+      this.lastResetTime = now;
+      console.log(`[Decoder] Keyframe requested (${reason})`);
+      this.resetVideoFn();
+    }
+  }
+
+  /**
    * Append raw scrcpy stream data from WebRTC data channel.
    * Data format: [8-byte PTS][4-byte size][H.264 Annex B data] per frame.
    * @param {ArrayBuffer} data
    */
   appendData(data) {
     const incoming = new Uint8Array(data);
-    const newBuffer = new Uint8Array(this.buffer.length + incoming.length);
-    newBuffer.set(this.buffer, 0);
-    newBuffer.set(incoming, this.buffer.length);
-    this.buffer = newBuffer;
+    if (this.buffer.length === 0) {
+      this.buffer = incoming;
+    } else {
+      const newBuffer = new Uint8Array(this.buffer.length + incoming.length);
+      newBuffer.set(this.buffer, 0);
+      newBuffer.set(incoming, this.buffer.length);
+      this.buffer = newBuffer;
+    }
     this.processBuffer();
   }
 
@@ -95,6 +118,7 @@ export class H264Decoder {
    */
   processBuffer() {
     let pos = 0;
+    let lostSync = false;
 
     while (pos + 12 <= this.buffer.length) {
       // Read PTS (8 bytes big-endian unsigned 64-bit)
@@ -111,7 +135,9 @@ export class H264Decoder {
 
       // Sanity check: invalid frame size means we're misaligned
       if (frameSize === 0 || frameSize > 10 * 1024 * 1024) {
-        // Skip one byte and try to resync
+        // Misaligned: bytes were lost. Resync, but remember that every delta frame
+        // decoded from here on is built on missing data (this is the "dragging pixels" look).
+        lostSync = true;
         pos += 1;
         continue;
       }
@@ -128,6 +154,8 @@ export class H264Decoder {
       // Process the complete frame
       this.processFrame(h264Data, isConfig, isKeyFrame, pts);
     }
+
+    if (lostSync) this.requestKeyframeOnly("stream lost sync");
 
     // Keep remaining unprocessed data in buffer
     if (pos > 0) {
@@ -228,6 +256,13 @@ export class H264Decoder {
       return;
     }
 
+    // Backpressure: if the decoder is behind, delta frames would play late and then
+    // smear. Drop them and wait for a clean keyframe instead.
+    if (!isKeyFrame && this.decoder.decodeQueueSize > this.MAX_DECODE_QUEUE) {
+      this.requestKeyframeOnly("decoder backlog");
+      return;
+    }
+
     // For keyframes, prepend config data (SPS+PPS) — same as Project3
     let frameData;
     if (isKeyFrame && this.configData) {
@@ -239,13 +274,15 @@ export class H264Decoder {
     }
 
     try {
+      // Use the stream's own PTS (monotonic) rather than assuming a fixed 30fps.
+      const ts = pts > this._lastPts ? pts : this._lastPts + 1000;
+      this._lastPts = ts;
       const chunk = new EncodedVideoChunk({
         type: isKeyFrame ? "key" : "delta",
-        timestamp: this.timestamp,
+        timestamp: ts,
         data: frameData,
       });
       this.decoder.decode(chunk);
-      this.timestamp += 33333; // ~30fps in microseconds
     } catch (err) {
       console.warn("[Decoder] Decode error:", err);
       if (this.decoder && this.decoder.state === "closed") {
@@ -270,19 +307,11 @@ export class H264Decoder {
     // Capture reference so error callbacks from OLD decoders don't kill new ones
     const thisDecoder = new VideoDecoder({
       output: (frame) => {
-        // Auto-detect canvas dimensions from decoded frame
-        if (frame.displayWidth !== this.canvas.width || frame.displayHeight !== this.canvas.height) {
-          this.canvas.width = frame.displayWidth;
-          this.canvas.height = frame.displayHeight;
-        }
-        this.ctx.drawImage(frame, 0, 0, this.canvas.width, this.canvas.height);
-        frame.close();
-        this._frameCount++;
-        this._lastFrameTime = Date.now();
-        if (!this._firstFrameFired && this.onFirstFrame) {
-          this._firstFrameFired = true;
-          this.onFirstFrame();
-        }
+        // Keep only the newest frame; older undrawn frames are discarded so the picture
+        // never lags behind or flickers through a backlog.
+        if (this._pendingFrame) this._pendingFrame.close();
+        this._pendingFrame = frame;
+        if (!this._raf) this._raf = requestAnimationFrame(() => this._paint());
       },
       error: (e) => {
         // Ignore errors from old decoder instances
@@ -315,6 +344,25 @@ export class H264Decoder {
       console.log("[Decoder] Configured successfully (Annex B)");
     } catch (e) {
       console.error("[Decoder] Config failed:", e);
+    }
+  }
+
+  _paint() {
+    this._raf = 0;
+    const frame = this._pendingFrame;
+    if (!frame) return;
+    this._pendingFrame = null;
+    if (frame.displayWidth !== this.canvas.width || frame.displayHeight !== this.canvas.height) {
+      this.canvas.width = frame.displayWidth;
+      this.canvas.height = frame.displayHeight;
+    }
+    this.ctx.drawImage(frame, 0, 0, this.canvas.width, this.canvas.height);
+    frame.close();
+    this._frameCount++;
+    this._lastFrameTime = Date.now();
+    if (!this._firstFrameFired && this.onFirstFrame) {
+      this._firstFrameFired = true;
+      this.onFirstFrame();
     }
   }
 
@@ -513,6 +561,7 @@ export class H264Decoder {
     this.buffer = new Uint8Array(0);
     this.configData = null;
     this.timestamp = 0;
+    this._lastPts = -1;
     this.configured = false;
     this._waitingForKeyframe = true;
     this._firstKeyframeReceived = false;
@@ -526,6 +575,9 @@ export class H264Decoder {
   }
 
   reset() {
+    if (this._pendingFrame) { this._pendingFrame.close(); this._pendingFrame = null; }
+    if (this._raf) { cancelAnimationFrame(this._raf); this._raf = 0; }
+    this._lastPts = -1;
     if (this.decoder) {
       try {
         this.decoder.close();

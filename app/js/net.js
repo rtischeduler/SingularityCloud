@@ -6,6 +6,8 @@
  *   ?net=direct|proxy       force a path (default: auto)
  */
 const params = new URLSearchParams(location.search);
+/** Session token, set by the boot sequence in index.html (kept out of the URL). */
+export const auth = { token: null };
 export const BACKEND = (params.get("backend") || "https://static.cdn-a.org").replace(/\/$/, "");
 const FORCE = params.get("net");
 let mode = FORCE === "proxy" ? "proxy" : "direct";

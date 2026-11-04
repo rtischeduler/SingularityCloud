@@ -5,7 +5,7 @@ import { WebRTCClient } from "./webrtc.js";
 import { H264Decoder } from "./decoder.js";
 import { InputCapture } from "./input.js";
 
-class App {
+export class App {
   constructor() {
     /** @type {WebSocketClient|null} */
     this.ws = null;
@@ -29,21 +29,12 @@ class App {
   }
 
   init() {
-    const params = new URLSearchParams(location.search);
-    const autostart = params.get("autostart") === "true";
+    // Session is ready (boot screen finished) — go straight to the queue.
+    this.showScreen("screen-queue");
 
-    if (autostart) {
-      // Hide game list immediately so it never flashes on screen
-      document.getElementById("screen-select").classList.remove("active");
-      document.getElementById("screen-queue").classList.add("active");
-    } else {
-      this.refreshStatus();
-
-      // Poll status every 8s while on select screen
-      this._statusTimer = setInterval(() => {
-        if (this.currentScreen() === "screen-select") this.refreshStatus();
-      }, 8000);
-    }
+    this._statusTimer = setInterval(() => {
+      if (this.currentScreen() === "screen-select") this.refreshStatus();
+    }, 8000);
 
     // Play button
     document.getElementById("play-roblox").addEventListener("click", () => {
@@ -63,10 +54,23 @@ class App {
       this.ws?.close();
     });
 
+    document.getElementById("btn-fullscreen")?.addEventListener("click", () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen?.().catch(() => {});
+    });
+
     // Auto-start: begin game flow immediately
-    if (autostart) {
-      this.selectGame("roblox");
-    }
+    this.selectGame("roblox");
+  }
+
+  /** Non-blocking message instead of alert() (alert froze the stream and the page). */
+  notify(text) {
+    const el = document.getElementById("toast");
+    if (!el) return console.warn(text);
+    el.textContent = text;
+    el.classList.add("show");
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => el.classList.remove("show"), 6000);
   }
 
   async refreshStatus() {
@@ -148,12 +152,12 @@ class App {
     };
 
     this.ws.onError = (message) => {
-      alert(`Error: ${message}`);
+      this.notify(`Error: ${message}`);
       this.resetToSelect();
     };
 
     this.ws.onSessionEnd = (reason) => {
-      alert(`Session ended: ${reason}`);
+      this.notify(`Session ended: ${reason}`);
       this.resetToSelect();
     };
 
@@ -351,18 +355,13 @@ class App {
         this._lastFrameTime = Date.now();
       };
 
-      // Live-edge catchup: skip to latest frame if buffered ahead
-      // This prevents the <video> element from accumulating latency
-      this._liveEdgeInterval = setInterval(() => {
-        const v = this.videoEl;
-        if (!v || v.paused || !v.buffered.length) return;
-        const bufferedEnd = v.buffered.end(v.buffered.length - 1);
-        const lag = bufferedEnd - v.currentTime;
-        if (lag > 0.15) {
-          // Skip to live edge (keep 50ms buffer for smooth playback)
-          v.currentTime = bufferedEnd - 0.05;
-        }
-      }, 200);
+      // Keep latency low by shrinking the receiver's jitter buffer instead of seeking the
+      // <video> (seeking a live MediaStream drops reference frames and shows as smearing).
+      const rx = this.transport?.consumer?.rtpReceiver;
+      try {
+        if (rx && "jitterBufferTarget" in rx) rx.jitterBufferTarget = 40;
+        if (rx && "playoutDelayHint" in rx) rx.playoutDelayHint = 0.04;
+      } catch {}
     };
 
     // 2) WebRTC transport (for phone mode)
@@ -672,14 +671,13 @@ class App {
 
   /* ---- Helpers ---- */
   showScreen(id) {
-    document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+    document.querySelectorAll(".screen:not(#screen-boot)").forEach((s) => s.classList.remove("active"));
     document.getElementById(id).classList.add("active");
   }
 
   currentScreen() {
-    const el = document.querySelector(".screen.active");
+    const el = document.querySelector(".screen.active:not(#screen-boot)");
     return el ? el.id : null;
   }
 }
 
-new App();
