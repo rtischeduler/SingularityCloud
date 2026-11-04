@@ -40,12 +40,14 @@
 .game-card:hover .play-tag, .game-card:focus-visible .play-tag { opacity: 1; }
 
 /* Astra library (listed, not playable yet) */
-.astra-header { margin-top: 56px; }
 .astra-note { color: var(--dim); font-size: .85rem; margin-bottom: 14px; }
 .astra-note[hidden] { display: none; }
-.game-card.locked { cursor: not-allowed; padding: 0 0 14px; overflow: hidden; opacity: .5; filter: grayscale(1); }
+.game-card.has-art, .game-card.locked { padding: 0 0 14px; overflow: hidden; }
+.game-card.has-art .pkg-name, .game-card.has-art .play-tag { padding: 0 16px; }
+.game-card.has-art .play-tag { margin-top: 8px; }
+.game-card.locked { cursor: not-allowed; opacity: .5; filter: grayscale(1); }
 .game-card.locked:hover { border-color: var(--line); background: var(--surface); transform: none; }
-.game-card.locked h3 { padding: 0 16px; margin-top: 12px; font-size: .9rem; }
+.game-card.has-art h3, .game-card.locked h3 { padding: 0 16px; margin-top: 12px; font-size: .9rem; }
 .card-art {
   aspect-ratio: 16 / 9; display: grid; place-items: center; font-size: 1.6rem; font-weight: 800; color: var(--faint);
   background: var(--surface) center / cover no-repeat; border-bottom: 1px solid var(--line);

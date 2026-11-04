@@ -41,13 +41,17 @@ export class Hub {
 
   /** Prepare the Astra section (the FreezeNova card is static markup in index.html). */
   mount() {
-    this.grid = this.$("astra-grid");
+    this.grid = this.$("game-grid");
     this.note = this.$("astra-note");
-    this.count = this.$("astra-count");
     this.io = "IntersectionObserver" in globalThis
       ? new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { this.io.unobserve(e.target); this.loadIcon(e.target); } }), { rootMargin: "200px" })
       : null;
     this.setNote("Loading the Astra library…");
+  }
+
+  /** FreezeNova's card is static markup; its image comes through the proxy like the Astra ones. */
+  loadFeatured() {
+    for (const art of this.grid.querySelectorAll(".has-art .card-art[data-icon]")) this.loadIcon(art);
   }
 
   setNote(text, retry = false) {
@@ -67,6 +71,7 @@ export class Hub {
   }
 
   async loadAstra() {
+    if (!this._featured) { this._featured = true; this.loadFeatured(); }
     const cached = this.readCache();
     if (cached && Date.now() - cached.t < CACHE_TTL) return this.render(cached.games);
     this.setNote("Loading the Astra library…");
@@ -87,7 +92,6 @@ export class Hub {
   render(games) {
     this.games = games;
     this.setNote("");
-    if (this.count) this.count.textContent = String(games.length);
     const d = this.doc, frag = d.createDocumentFragment();
     for (const g of games) {
       const card = d.createElement("div");
@@ -103,8 +107,9 @@ export class Hub {
       card.append(art, h, tag);
       frag.append(card);
     }
-    this.grid.replaceChildren(frag);
-    for (const art of this.grid.querySelectorAll(".card-art[data-icon]")) this.io ? this.io.observe(art) : this.loadIcon(art);
+    this.grid.querySelectorAll(".game-card.locked").forEach((c) => c.remove());
+    this.grid.append(frag);
+    for (const art of this.grid.querySelectorAll(".locked .card-art[data-icon]")) this.io ? this.io.observe(art) : this.loadIcon(art);
   }
 
   /** Icons come through the proxy too (blob URLs), a few at a time, only when scrolled near. */
