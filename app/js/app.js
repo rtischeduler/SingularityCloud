@@ -21,6 +21,8 @@ export class App {
     this._transportMode = null;
     this._statusTimer = null;
     this._loadingGame = false;
+    this.onClosed = null;   // (reason) => void, set by the host bridge
+    this.deeplink = false;  // launched from a host page: no Cancel button
 
     this.init();
   }
@@ -93,13 +95,14 @@ export class App {
     this.loader?.hide();
   }
 
-  async selectGame(gameId) {
+  async selectGame(gameId, { deeplink = false } = {}) {
     if (this._starting) return;
     this._starting = true;
+    this.deeplink = deeplink;
     const startToken = (this._startToken = (this._startToken || 0) + 1);
     const cancelled = () => this._startToken !== startToken;
     this.loader?.show("Starting a session", {
-      cancel: () => { this._startToken++; this._starting = false; this.loader?.hide(); this.showScreen("screen-select"); },
+      cancel: deeplink ? null : () => { this._startToken++; this._starting = false; this.loader?.hide(); this.showScreen("screen-select"); },
     });
     try {
       await this.ensureSession((i, total, text) => { if (!cancelled()) this.loader?.step(i, total, text); });
@@ -133,7 +136,7 @@ export class App {
     this._tlog("Play clicked");
 
     this.showScreen(null);
-    this.loader?.setCancel(() => this.resetToSelect());
+    this.loader?.setCancel(this.deeplink ? null : () => this.resetToSelect());
     this.loader?.step(this.stepTotal - 2, this.stepTotal, "Waiting in queue");
 
     this._startVideoWatchdog();
@@ -180,12 +183,12 @@ export class App {
 
     this.ws.onError = (message) => {
       this.notify(`Error: ${message}`);
-      this.resetToSelect();
+      this.resetToSelect("error");
     };
 
     this.ws.onSessionEnd = (reason) => {
       this.notify(`Session ended: ${reason}`);
-      this.resetToSelect();
+      this.resetToSelect("ended");
     };
 
     this.ws.onKeyboardState = (visible) => {
@@ -272,7 +275,7 @@ export class App {
     };
 
     this.ws.onClose = () => {
-      if (this.currentScreen() === "screen-game") this.resetToSelect();
+      if (this.currentScreen() === "screen-game") this.resetToSelect("ended");
     };
 
     this.ws.connect();
@@ -324,7 +327,7 @@ export class App {
       this._tlog("mediasoup transport connected — waiting for game-ready");
     };
 
-    this.transport.onDisconnected = () => this.resetToSelect();
+    this.transport.onDisconnected = () => this.resetToSelect("ended");
 
     this.transport.onVideoTrack = (track) => {
       this._tlog("mediasoup video track received");
@@ -371,7 +374,7 @@ export class App {
 
     this.webrtc.onDisconnected = () => {
       this._tlog("WebRTC disconnected");
-      this.resetToSelect();
+      this.resetToSelect("ended");
     };
 
     const resetVideoFn = () => {
@@ -511,7 +514,7 @@ export class App {
     }
   }
 
-  resetToSelect() {
+  resetToSelect(reason = "exit") {
     this._stopVideoWatchdog();
     this._gameReadyAt = null;
     this._isUnblocking = false;
@@ -563,6 +566,8 @@ export class App {
 
     this.showScreen("screen-select");
     this.refreshStatus();
+    this.deeplink = false;
+    this.onClosed?.(reason);
   }
 
   _startVideoWatchdog() {

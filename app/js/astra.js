@@ -454,17 +454,18 @@ export class AstraSessions {
     Object.assign(this, { webSocket, show, loader, doc, notify });
     this.video = doc.getElementById("astra-video");
     this.token = 0;
+    this.onClosed = null; // (reason) => void, set by the host bridge
     this.footer = new StreamFooter(doc.getElementById("screen-astra"), { doc, onExit: () => this.leave() });
     doc.defaultView?.addEventListener("beforeunload", () => this.sessionId && navigator.sendBeacon?.(ASTRA_ORIGIN + "/api/cg/stop", new Blob([JSON.stringify({ sessionId: this.sessionId })], { type: "application/json" })));
   }
 
-  async play(game) {
+  async play(game, { deeplink = false } = {}) {
     if (this.busy) return;
     this.busy = true;
     const token = ++this.token;
     const alive = () => { if (token !== this.token) throw new Error("cancelled"); };
     const step = (i, text) => this.loader.step(i, STEP_TOTAL, text);
-    this.loader.show("Starting " + game.name, { cancel: () => this.leave() });
+    this.loader.show("Starting " + game.name, { cancel: deeplink ? null : () => this.leave() }); // launched from a host page: no Cancel button
     this.show("screen-astra");
     this.footer.reset({ title: game.name });
     try {
@@ -495,12 +496,12 @@ export class AstraSessions {
       if (K.transport === "unavailable") throw new Error("No server available right now. Try again shortly.");
 
       step(6, "Negotiating stream");
-      const common = { onStatus: (t) => this.loader.text(t), onEnded: (why) => { this.notify("Session ended: " + why); this.leave(); } };
+      const common = { onStatus: (t) => this.loader.text(t), onEnded: (why) => { this.notify("Session ended: " + why); this.leave("ended"); } };
       if (K.provider === "tertiary") throw new Error("This game uses a stream type we don't support yet.");
       if (K.provider === "quaternary" && K.ng) {
         relay.close();
         this.startTimer(parseDeadline(K.ng.edgeEndsAt), true);
-        this.player = new AstraPlayer({ client: this.client, launch: { ...K.ng, sessionId: sid }, video: this.video, ...common, onError: (e) => { this.notify(e.message); this.leave(); } });
+        this.player = new AstraPlayer({ client: this.client, launch: { ...K.ng, sessionId: sid }, video: this.video, ...common, onError: (e) => { this.notify(e.message); this.leave("error"); } });
         await this.player.start();
       } else if (K.provider === "secondary") {
         this.video.muted = true;
@@ -523,7 +524,7 @@ export class AstraSessions {
       this.video.play?.().catch(() => {});
       this.loader.hide();
     } catch (e) {
-      if (e.message !== "cancelled") { console.error("[astra]", e); this.notify(e.message || "Couldn't start that game."); await this.leave(); }
+      if (e.message !== "cancelled") { console.error("[astra]", e); this.notify(e.message || "Couldn't start that game."); await this.leave("error"); }
     } finally {
       this.busy = false;
     }
@@ -536,7 +537,7 @@ export class AstraSessions {
     else this.footer.startElapsed();
   }
 
-  async leave() {
+  async leave(reason = "exit") {
     this.token++;
     this.footer.reset();
     this.player?.dispose(); this.player = null;
@@ -544,6 +545,7 @@ export class AstraSessions {
     const id = this.sessionId; this.sessionId = null;
     this.loader.hide();
     this.show("screen-select");
+    this.onClosed?.(reason);
     if (id) await this.client.stop(id);
   }
 }

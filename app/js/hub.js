@@ -37,6 +37,8 @@ export class Hub {
     this.games = [];
     /** @type {((game: {id: string, name: string}) => void) | null} */
     this.onSelect = null;
+    /** @type {((games: Array<{id: string, name: string, icon: string|null}>) => void) | null} called after the library renders */
+    this.onRender = null;
   }
 
   $(id) { return this.doc.getElementById(id); }
@@ -117,6 +119,7 @@ export class Hub {
     this.grid.querySelectorAll(".game-card.astra").forEach((c) => c.remove());
     this.grid.append(frag);
     for (const art of this.grid.querySelectorAll(".astra .card-art[data-icon]")) this.io ? this.io.observe(art) : this.loadIcon(art);
+    try { this.onRender?.(games); } catch {}
   }
 
   /** Icons come through the proxy too (blob URLs), a few at a time, only when scrolled near. */
