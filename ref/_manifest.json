@@ -1,0 +1,71 @@
+{
+  "origin": "https://static.cdn-a.org",
+  "files": [
+    {
+      "url": "https://static.cdn-a.org/?autostart=true",
+      "file": "ref/index__833e81ab.html",
+      "type": "text/html; charset=utf-8",
+      "bytes": 3743
+    },
+    {
+      "url": "https://static.cdn-a.org/style.css?v=1.4.31",
+      "file": "ref/style__1bb84cef.css",
+      "type": "text/css; charset=UTF-8",
+      "bytes": 10195
+    },
+    {
+      "url": "https://static.cdn-a.org/js/app.js?v=1.4.31",
+      "file": "ref/js/app__1bb84cef.js",
+      "type": "application/javascript; charset=UTF-8",
+      "bytes": 23680
+    },
+    {
+      "url": "https://static.cdn-a.org/style.css",
+      "file": "ref/style.css",
+      "type": "text/css; charset=UTF-8",
+      "bytes": 10195
+    },
+    {
+      "url": "https://static.cdn-a.org/js/app.js",
+      "file": "ref/js/app.js",
+      "type": "application/javascript; charset=UTF-8",
+      "bytes": 23680
+    },
+    {
+      "url": "https://static.cdn-a.org/js/websocket.js",
+      "file": "ref/js/websocket.js",
+      "type": "application/javascript; charset=UTF-8",
+      "bytes": 4701
+    },
+    {
+      "url": "https://static.cdn-a.org/js/mediasoup-transport.js",
+      "file": "ref/js/mediasoup-transport.js",
+      "type": "application/javascript; charset=UTF-8",
+      "bytes": 4750
+    },
+    {
+      "url": "https://static.cdn-a.org/js/webrtc.js",
+      "file": "ref/js/webrtc.js",
+      "type": "application/javascript; charset=UTF-8",
+      "bytes": 5553
+    },
+    {
+      "url": "https://static.cdn-a.org/js/decoder.js",
+      "file": "ref/js/decoder.js",
+      "type": "application/javascript; charset=UTF-8",
+      "bytes": 18047
+    },
+    {
+      "url": "https://static.cdn-a.org/js/input.js",
+      "file": "ref/js/input.js",
+      "type": "application/javascript; charset=UTF-8",
+      "bytes": 26417
+    },
+    {
+      "url": "https://static.cdn-a.org/js/mediasoup-client.bundle.js",
+      "file": "ref/js/mediasoup-client.bundle.js",
+      "type": "application/javascript; charset=UTF-8",
+      "bytes": 485304
+    }
+  ]
+}
