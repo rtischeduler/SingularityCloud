@@ -3,26 +3,43 @@ name: Probe backend
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: /status with a foreign Origin
         run: |
-          curl -si --max-time 20 https://static.cdn-a.org/status -H "Origin: https://rtischeduler.github.io" | head -25
+          echo '#### '"$STEP" >> probe.txt
+          curl -si --max-time 20 https://static.cdn-a.org/status -H "Origin: https://rtischeduler.github.io" | head -25 | tee -a probe.txt
       - name: /status preflight
         run: |
+          echo '#### '"$STEP" >> probe.txt
           curl -si --max-time 20 -X OPTIONS https://static.cdn-a.org/status \
             -H "Origin: https://rtischeduler.github.io" \
-            -H "Access-Control-Request-Method: GET" | head -20
+            -H "Access-Control-Request-Method: GET" | head -20 | tee -a probe.txt
       - name: /ws upgrade, foreign Origin
         run: |
+          echo '#### '"$STEP" >> probe.txt
           curl -si --max-time 10 https://static.cdn-a.org/ws \
             -H "Connection: Upgrade" -H "Upgrade: websocket" \
             -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-            -H "Origin: https://rtischeduler.github.io" | head -15 || true
+            -H "Origin: https://rtischeduler.github.io" | head -15 | tee -a probe.txt || true
       - name: /ws upgrade, no Origin
         run: |
+          echo '#### '"$STEP" >> probe.txt
           curl -si --max-time 10 https://static.cdn-a.org/ws \
             -H "Connection: Upgrade" -H "Upgrade: websocket" \
-            -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" | head -15 || true
+            -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" | head -15 | tee -a probe.txt || true
+      - name: Commit result
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p ref && mv probe.txt ref/_probe.txt
+          git add ref/_probe.txt
+          git commit -m "probe result" || true
+          git pull --rebase origin main
+          git push origin main
