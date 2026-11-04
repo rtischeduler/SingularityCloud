@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Does what index.html does (anonymous Supabase session -> link_guest_ip ->
-set_duck_identity -> refresh token), then fetches the page the iframe would
-have loaded and crawls it (same origin) into ref/.
+Crawls CRAWL_URL (default https://astra-education/lite) and everything it references on the
+same origin into ref/.
 
-Config constants are read from index.html so there is one source of truth.
+Optional (WITH_SESSION=1): first does what the app's boot does (anonymous Supabase session ->
+link_guest_ip -> set_duck_identity -> refresh token) and appends ?token=...&autostart=true to
+the start URL. The Supabase constants are read from app/js/session.js (single source of truth).
 The token is never written to disk; saved files are the page's own assets.
 """
 import json, os, re, sys, urllib.request, urllib.parse, urllib.error, hashlib
@@ -16,16 +17,18 @@ OUT = os.path.join(ROOT, "ref")
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
 MAX_FILES = int(os.environ.get("MAX_FILES", "2000"))
 
-src = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
-def const(name):
-    m = re.search(r'const\s+%s\s*=\s*"([^"]+)"' % name, src)
-    if not m: sys.exit(f"missing constant {name} in index.html")
-    return m.group(1)
+CRAWL_URL = os.environ.get("CRAWL_URL", "https://astra-education/lite").strip()
+WITH_SESSION = os.environ.get("WITH_SESSION", "").lower() in ("1", "true", "yes")
+_u = urllib.parse.urlparse(CRAWL_URL)
+if _u.scheme not in ("http", "https") or not _u.netloc:
+    sys.exit(f"CRAWL_URL must be a full http(s) URL, got {CRAWL_URL!r}")
+APP_ORIGIN = f"{_u.scheme}://{_u.netloc}"
 
-MAIN_URL, MAIN_KEY = const("MAIN_SUPABASE_URL"), const("MAIN_SUPABASE_ANON_KEY")
-LB_URL, LB_KEY = const("LEADERBOARD_URL"), const("LEADERBOARD_ANON_KEY")
-m = re.search(r"iframe\.src\s*=\s*`(https://[^/?`]+)", src)
-APP_ORIGIN = m.group(1) if m else sys.exit("could not find iframe origin")
+def const(name):
+    src = open(os.path.join(ROOT, "app", "js", "session.js"), encoding="utf-8").read()
+    m = re.search(r'const\s+%s\s*=\s*"([^"]+)"' % name, src)
+    if not m: sys.exit(f"missing constant {name} in app/js/session.js")
+    return m.group(1)
 
 def http(url, method="GET", headers=None, body=None, binary=False):
     h = {"User-Agent": UA}; h.update(headers or {})
@@ -45,6 +48,9 @@ def jpost(url, key, payload, token=None, path_suffix=""):
         return None
 
 def setup_session():
+    global MAIN_URL, MAIN_KEY, LB_URL, LB_KEY
+    MAIN_URL, MAIN_KEY = const("MAIN_SUPABASE_URL"), const("MAIN_SUPABASE_ANON_KEY")
+    LB_URL, LB_KEY = const("LEADERBOARD_URL"), const("LEADERBOARD_ANON_KEY")
     print("signup (anonymous)...")
     s = jpost(f"{MAIN_URL}/auth/v1/signup", MAIN_KEY, {})
     if not s or "access_token" not in s: sys.exit("anonymous signup failed")
@@ -84,10 +90,11 @@ STR_RE = re.compile(r"""["'`]((?:\.{0,2}/)?[\w\-./@%~+]+\.""" + ASSET_EXT + r"""
 CSS_URL = re.compile(r"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)")
 CSS_IMP = re.compile(r"@import\s+['\"]([^'\"]+)['\"]")
 
-def local_path(url):
+def local_path(url, ctype=""):
     p = urllib.parse.urlparse(url)
     path = p.path
     if path.endswith("/") or path == "": path += "index.html"
+    elif "html" in ctype.lower() and not os.path.splitext(path)[1]: path += "/index.html"
     path = path.lstrip("/")
     if p.query:
         stem, ext = os.path.splitext(path)
@@ -110,10 +117,10 @@ def crawl(start_url, token):
         except Exception as e:
             print(f"  skip {key}: {e}", file=sys.stderr); continue
         if not final.startswith(APP_ORIGIN): continue
-        dest = local_path(strip(final) if urllib.parse.urlparse(final).path not in ("", "/") or not manifest else key)
+        dest = local_path(strip(final) if urllib.parse.urlparse(final).path not in ("", "/") or not manifest else key, ctype)
         if not dest.startswith(OUT): continue
         os.makedirs(os.path.dirname(dest), exist_ok=True)
-        if token.encode() in data:  # safety: don't commit a live token
+        if token and token.encode() in data:  # safety: don't commit a live token
             data = data.replace(token.encode(), b"__TOKEN__")
         open(dest, "wb").write(data)
         manifest.append({"url": key, "file": os.path.relpath(dest, ROOT), "type": ctype, "bytes": len(data)})
@@ -137,9 +144,16 @@ def crawl(start_url, token):
     return manifest
 
 if __name__ == "__main__":
-    token = setup_session()
-    start = f"{APP_ORIGIN}/?token={urllib.parse.quote(token)}&autostart=true"
+    token = ""
+    start = CRAWL_URL
+    if WITH_SESSION:
+        token = setup_session()
+        sep = "&" if "?" in CRAWL_URL else "?"
+        start = f"{CRAWL_URL}{sep}token={urllib.parse.quote(token)}&autostart=true"
+    print(f"crawling {CRAWL_URL} (origin {APP_ORIGIN})")
     os.makedirs(OUT, exist_ok=True)
     manifest = crawl(start, token)
-    json.dump({"origin": APP_ORIGIN, "files": manifest}, open(os.path.join(OUT, "_manifest.json"), "w"), indent=2)
+    if not manifest:
+        sys.exit(f"nothing saved: could not fetch {CRAWL_URL} (check the URL/hostname)")
+    json.dump({"origin": APP_ORIGIN, "start": CRAWL_URL, "files": manifest}, open(os.path.join(OUT, "_manifest.json"), "w"), indent=2)
     print(f"done: {len(manifest)} files -> ref/")

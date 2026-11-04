@@ -3,6 +3,13 @@ name: Crawl ref
 on:
   workflow_dispatch:
     inputs:
+      url:
+        description: "Page to crawl (same-origin assets are saved to ref/)"
+        default: "https://astra-education/lite"
+      with_session:
+        description: "Create a Supabase session and pass ?token=...&autostart=true"
+        type: boolean
+        default: false
       max_files:
         description: "Max files to crawl"
         default: "2000"
@@ -26,14 +33,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Create session and crawl app into ref/
+      - name: Crawl page into ref/
         env:
+          CRAWL_URL: ${{ inputs.url || 'https://astra-education/lite' }}
+          WITH_SESSION: ${{ inputs.with_session && '1' || '' }}
           MAX_FILES: ${{ inputs.max_files }}
         run: |
           rm -rf ref
           python scripts/crawl_ref.py
 
       - name: Commit ref/ to main
+        env:
+          CRAWL_URL: ${{ inputs.url || 'https://astra-education/lite' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -41,7 +52,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes"
           else
-            git commit -m "Update ref/ crawl of hosted app"
+            git commit -m "Update ref/ crawl of ${CRAWL_URL}"
             git pull --rebase origin main
             git push origin main
           fi
