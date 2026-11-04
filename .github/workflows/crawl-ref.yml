@@ -5,7 +5,7 @@ on:
     inputs:
       url:
         description: "Page to crawl (same-origin assets are saved to ref/)"
-        default: "https://astra-education/lite"
+        default: "https://astra-education.top/lite"
       with_session:
         description: "Create a Supabase session and pass ?token=...&autostart=true"
         type: boolean
@@ -35,7 +35,7 @@ jobs:
 
       - name: Crawl page into ref/
         env:
-          CRAWL_URL: ${{ inputs.url || 'https://astra-education/lite' }}
+          CRAWL_URL: ${{ inputs.url || 'https://astra-education.top/lite' }}
           WITH_SESSION: ${{ inputs.with_session && '1' || '' }}
           MAX_FILES: ${{ inputs.max_files }}
         run: |
@@ -44,7 +44,7 @@ jobs:
 
       - name: Commit ref/ to main
         env:
-          CRAWL_URL: ${{ inputs.url || 'https://astra-education/lite' }}
+          CRAWL_URL: ${{ inputs.url || 'https://astra-education.top/lite' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
