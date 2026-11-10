@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-04T04:59:56.069Z",
+ "updated": "2026-11-10T07:20:33.358Z",
  "games": [
   {
    "id": "dg0021",
@@ -1047,7 +1047,7 @@
    "icon": "/cg/sg-jy0121-grid.jpg"
   },
   {
-   "id": "roblox",
+   "id": "ng_roblox",
    "name": "Roblox",
    "icon": "/cg/tg-roblox-launch.jpg"
   },
